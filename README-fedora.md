@@ -1,6 +1,10 @@
 # Cuttlefish on Fedora Asahi Remix (Apple Silicon)
 
-Fedora RPM overlay for [android-cuttlefish](https://github.com/google/android-cuttlefish).
+The [android-cuttlefish](https://github.com/google/android-cuttlefish) emulator targets Debian Linux for build and deployment.  
+
+This repo adds an RPM overlay for Fedora Asahi (aarch64), making as few changes as possible to upstream code for a successful RPM build.
+
+<img width="3456" height="2160" alt="cf" src="https://github.com/user-attachments/assets/7ee4f5a0-76b2-4b8e-8832-f4fd22321347" />
 
 ## Quick start
 
@@ -10,14 +14,14 @@ git clone https://github.com/google/android-cuttlefish.git
 cd android-cuttlefish
 git clone https://github.com/DesktopECHO/asahi-cuttlefish.git _overlay
 
-# 2. Copy overlay into the upstream tree (one command)
+# 2. Copy overlay into the upstream tree
 rsync -a --exclude='README.md' _overlay/ .
 
 # 3. Build (applies patches, installs deps, builds RPMs)
 bash tools/buildutils/build_packages_fedora.sh
 
 # 4. Install
-sudo dnf install rpm/_rpms/*/*.rpm
+sudo dnf install rpm/_rpms/aarch64/*.rpm
 
 # 5. Add yourself to groups and reboot
 sudo usermod -aG kvm,cvdnetwork,render "$USER"
