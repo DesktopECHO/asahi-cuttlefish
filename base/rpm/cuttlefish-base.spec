@@ -54,7 +54,8 @@ BuildRequires:  libxcrypt-compat
 # --- Runtime Dependencies (translated from base/debian/control Depends) ---
 # adduser -> shadow-utils (useradd/groupadd)
 # dnsmasq-base -> dnsmasq
-# ebtables/iptables -> firewalld (patch 0003 replaces direct iptables calls)
+# firewalld remains the control plane on Fedora, but patch 0003 uses its
+# direct interface to preserve Debian's NAT and bridge-filtering behavior.
 # iproute2 -> iproute
 # libarchive-tools -> bsdtar
 # libcap2-bin -> libcap
@@ -65,8 +66,10 @@ Requires:       shadow-utils
 Requires:       bridge-utils
 Requires:       curl
 Requires:       dnsmasq
+Requires:       ebtables
 Requires:       firewalld
 Requires:       iproute
+Requires:       iptables
 Requires:       bsdtar
 Requires:       libcap
 Requires:       libcurl
@@ -94,8 +97,8 @@ Requires:       xdg-utils
 Suggests:       grub2-efi-aa64-modules
 # SELinux policy tools — used in %post to auto-generate a policy module
 # from any AVCs triggered by the cuttlefish-host-resources service.
-Suggests:       policycoreutils-python-utils
-Suggests:       audit
+Requires(post): audit
+Requires(post): policycoreutils-python-utils
 
 %description
 Contains set of tools and binaries required to boot up and manage
@@ -215,7 +218,7 @@ install -D -m 0644 /dev/stdin %{buildroot}%{_unitdir}/cuttlefish-host-resources.
 [Unit]
 Description=Cuttlefish host network resource setup
 After=network-online.target firewalld.service
-Wants=network-online.target
+Wants=network-online.target firewalld.service
 
 [Service]
 Type=oneshot
@@ -278,7 +281,9 @@ systemctl restart cuttlefish-host-resources.service 2>/dev/null || true
 # Generate an SELinux policy module from any AVCs the service just triggered.
 # Fedora runs SELinux enforcing by default; cuttlefish's bridge creation,
 # setcap, and KVM access commonly trip policy denials on first install.
-if command -v ausearch >/dev/null 2>&1 && command -v audit2allow >/dev/null 2>&1; then
+if command -v ausearch >/dev/null 2>&1 && \
+   command -v audit2allow >/dev/null 2>&1 && \
+   command -v semodule >/dev/null 2>&1; then
     sleep 1  # give auditd a moment to flush
     ausearch -m AVC -ts recent 2>/dev/null | audit2allow -M cuttlefish-avd 2>/dev/null || true
     if [ -f cuttlefish-avd.pp ]; then

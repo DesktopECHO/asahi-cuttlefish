@@ -116,10 +116,17 @@ network bridges. Our `cuttlefish-base` RPM does the same thing:
 - **`cvdnetwork` group**: Created automatically in the RPM `%pre` scriptlet.
 - **Network bridges**: The `cuttlefish-host-resources.service` systemd unit
   creates `cvd-wbr`, `cvd-ebr`, and per-instance tap interfaces on start,
-  and tears them down on stop. Firewalld zones are managed via `firewall-cmd`
-  (patch 0003 replaces the Debian `iptables`/`ebtables` calls).
+  and tears them down on stop. Patch 0003 uses firewalld's **direct interface**
+  to install the same IPv4 masquerade and bridge-filter rules as Debian, and
+  also saves those rules to the permanent firewalld config so a later
+  `firewall-cmd --reload` does not silently break guest networking. If
+  firewalld is down, the service now warns instead of failing so `slirp`
+  launches are not blocked, but bridge/tap networking remains degraded
+  until firewalld is restored.
 - **`setcap`**: Applied to `cvdalloc` in the RPM `%post` scriptlet.
-- **SELinux policy**: Auto-generated from AVCs in the `%post` scriptlet.
+- **SELinux policy**: Auto-generated from AVCs in the `%post` scriptlet
+  using `audit` + `audit2allow`, which are now required for install-time
+  policy generation.
 
 No manual setup required beyond `sudo dnf install` and adding your user
 to the `kvm,cvdnetwork,render` groups.
@@ -161,7 +168,7 @@ tools/testutils/prepare_host_fedora.sh       # replaces prepare_host.sh
 patches/
  0001-mtools-fix-termio-h-fedora.patch               # glibc 2.39 removed <termio.h>
  0002-libzip-bump-to-bcr1-fix-lib64-fedora.patch     # cmake lib64 path fix
- 0003-host-resources-fedora-firewalld.patch          # lsb, sysconfig, firewalld
+ 0003-host-resources-fedora-firewalld.patch          # lsb, sysconfig, firewalld direct rules
  0004-stamp-helper-remove-dpkg-parsechangelog.patch  # Debian-only tool
  0005-module-bazel-bump-dep-versions.patch           # silence version mismatch warnings
 ```
@@ -179,7 +186,7 @@ forwarding the same `-r`/`-c`/`-d` cache flags. The per-package script uses
 |---|---|---|---|
 | 0001 | `base/cvd/build_external/mtools/config.h` | 1 | Fedora glibc >= 2.39 removed legacy `<termio.h>` |
 | 0002 | `base/cvd/MODULE.bazel` | 1 | libzip 1.10.1 cmake installs to `lib64/` on Fedora; `.bcr.1` adds `CMAKE_INSTALL_LIBDIR=lib` |
-| 0003 | `base/debian/...host-resources.init` | ~40 | Removes `. /lib/lsb/init-functions` (Debian-only); `/etc/default/` to `/etc/sysconfig/`; `iptables`/`ebtables` to `firewall-cmd --zone=trusted` |
+| 0003 | `base/debian/...host-resources.init` | ~70 | Removes `. /lib/lsb/init-functions`; `/etc/default/` to `/etc/sysconfig/`; recreates Debian NAT + bridge filtering via firewalld direct rules; fixes `ipv6_bridge` and bridge IPv6 teardown bugs |
 | 0004 | `base/stamp_helper.sh` | 1 | Replaces `dpkg-parsechangelog` (Debian-only) with `sed` to extract version from changelog |
 | 0005 | `base/cvd/MODULE.bazel` | 3 | Bumps `googleapis`, `protobuf`, `rules_java` to match resolved dependency graph |
 
@@ -189,7 +196,7 @@ forwarding the same `-r`/`-c`/`-d` cache flags. The per-package script uses
 |---|---|
 | `adduser` | `shadow-utils` |
 | `dnsmasq-base` | `dnsmasq` |
-| `ebtables-legacy`, `iptables` | `firewalld` |
+| `ebtables-legacy`, `iptables` | `firewalld` direct rules backed by `ebtables` + `iptables` |
 | `iproute2` | `iproute` |
 | `libarchive-tools` | `bsdtar` |
 | `libcap2-bin` | `libcap` |
@@ -244,8 +251,10 @@ forwarding the same `-r`/`-c`/`-d` cache flags. The per-package script uses
 
 Fedora runs SELinux enforcing. The RPM `%post` scriptlet automatically
 generates and installs an SELinux policy module from any AVCs triggered
-during the initial `cuttlefish-host-resources.service` start. If you hit
-additional permission denials later:
+during the initial `cuttlefish-host-resources.service` start. The RPM now
+pulls in the `audit` and `policycoreutils-python-utils` tooling needed for
+that first-pass policy generation. If you hit additional permission denials
+later:
 
 ```bash
 sudo ausearch -m AVC -ts recent | audit2allow -M cuttlefish

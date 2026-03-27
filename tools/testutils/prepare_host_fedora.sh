@@ -20,6 +20,15 @@ function check_service_started() {
   systemctl is-active "${service}"
 }
 
+function warn_if_service_inactive() {
+  local service="$1"
+  local reason="$2"
+  echo "Checking service ${service} status"
+  if ! systemctl is-active --quiet "${service}"; then
+    echo "WARNING: ${service} is not active; ${reason}" >&2
+  fi
+}
+
 function load_kernel_modules() {
   echo "Loading kernel modules"
   sudo modprobe "$@"
@@ -74,7 +83,8 @@ fi
 sudo dnf makecache
 install_pkgs "${PKG_DIR}" cuttlefish-base cuttlefish-metrics cuttlefish-user
 
-check_service_started cuttlefish-host-resources
+warn_if_service_inactive firewalld "bridge/tap networking may be unavailable, but slirp mode can still work"
+warn_if_service_inactive cuttlefish-host-resources "bridge/tap networking may be unavailable, but slirp mode can still work"
 load_kernel_modules kvm vhost-vsock vhost-net bridge
 grant_device_access vhost-vsock vhost-net kvm
 check_service_started cuttlefish-operator
