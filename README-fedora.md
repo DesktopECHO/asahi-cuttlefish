@@ -19,8 +19,8 @@ cd asahi-cuttlefish
 # 2. Optional: keep the Google repository around as an upstream remote
 git remote add upstream https://github.com/google/android-cuttlefish.git
 
-# 3. Build the RPMs from this fork
-bash tools/buildutils/build_packages.sh
+# 3. Start the build from this fork
+/asahi-cuttlefish/tools/buildutils/build_packages.sh
 
 # 4. Install the local host packages and bundled AOSP tree
 sudo dnf install \
