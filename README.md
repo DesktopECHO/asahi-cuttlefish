@@ -1,4 +1,4 @@
-# Android Cuttlefish and CrosVM for Fedora Asahi Remix
+# Android Cuttlefish+CrosVM for Fedora Asahi Remix
 
 This repository is a fork of
 [google/android-cuttlefish](https://github.com/google/android-cuttlefish), adapted for RPM-based distributions like Fedora Asahi Remix. 
