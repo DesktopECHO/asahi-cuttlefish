@@ -1,0 +1,561 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+exec 3>&1
+
+LOG_FILE="/tmp/acf.log"
+mkdir -p "$(dirname "${LOG_FILE}")"
+: > "${LOG_FILE}"
+exec >"${LOG_FILE}" 2>&1
+
+# Editable defaults
+CVD_HOST_OUT="${ANDROID_HOST_OUT:-/usr/lib/cuttlefish-common}"
+CVD_PRODUCT_OUT="${ANDROID_PRODUCT_OUT:-/usr/share/cuttlefish-common/aosp}"
+: "${CVD_HOME_DIR:=${CVD_PRODUCT_OUT}}"
+CVD_BIN="${CVD_HOST_OUT}/bin/cvd_internal_start"
+CVD_CLI_BIN="${CVD_HOST_OUT}/bin/cvd"
+CVD_CPUS="4"
+CVD_MEMORY_MB="4096"
+CVD_GPU_MODE="gfxstream"
+CVD_GPU_VHOST_USER_MODE="off"
+CVD_ENABLE_GPU_UDMABUF="true"
+CVD_USE_CVDALLOC="true"
+CVD_VHOST_NET="true"
+CVD_VHOST_USER_VSOCK="false"
+CVD_ENABLE_WIFI="false"
+CVD_ENABLE_HOST_BLUETOOTH="true"
+CVD_NETSIM="false"
+CVD_NETSIM_BT="false"
+CVD_ENABLE_HOST_UWB="false"
+CVD_NETSIM_UWB="false"
+CVD_X_RES="1920"
+CVD_Y_RES="1200"
+CVD_DPI="220"
+CVD_REPORT_USAGE_STATS="n"
+CVD_BOOT_MESSAGE="Virtual device booted successfully"
+CVD_BOOT_TIMEOUT_SEC="90"
+CVD_START_SCRCPY_TIMEOUT_SEC="45"
+
+SCRIPT_NAME="$(basename "$0")"
+
+log() {
+  printf '[%s] %s\n' "${SCRIPT_NAME}" "$*" >&2
+}
+
+die() {
+  log "error: $*"
+  exit 1
+}
+
+respond() {
+  printf '%s\n' "$*" >&3
+}
+
+usage() {
+  cat >&3 <<EOF
+Usage:
+
+  ${SCRIPT_NAME} start [cvd_internal_start args...]       · Start windowed
+  ${SCRIPT_NAME} startfs [cvd_internal_start args...]     · Start fullscreen
+  ${SCRIPT_NAME} stop [cvd stop args...]
+  ${SCRIPT_NAME} restart [cvd_internal_start args...]
+  ${SCRIPT_NAME} status
+  ${SCRIPT_NAME} help
+
+Notes:
+
+  - Edit the variables at the top of this script to change defaults.
+  - Extra arguments after 'start' are passed directly to cvd_internal_start.
+  - Extra arguments after 'startfs' are passed directly to cvd_internal_start.
+  - Extra arguments after 'stop' are passed directly to cvd stop.
+  - Extra arguments after 'restart' are passed directly to cvd_internal_start.
+  - Common radio/network overrides:
+      --enable_wifi=<true|false>
+      --enable_host_bluetooth=<true|false>
+      --netsim=<true|false>
+      --netsim_bt=<true|false>
+      --enable_host_uwb=<true|false>
+      --netsim_uwb=<true|false>
+  - Current defaults use the host Bluetooth path and disable Wi-Fi/OpenWRT,
+    netsim, and UWB:
+      --enable_wifi=false
+      --enable_host_bluetooth=true
+      --netsim=false
+      --netsim_bt=false
+      --enable_host_uwb=false
+      --netsim_uwb=false
+
+EOF
+}
+
+shell_join() {
+  printf '%q ' "$@"
+}
+
+user_supplied_flag() {
+  local flag="$1"
+  shift
+  local arg
+  for arg in "$@"; do
+    case "${arg}" in
+      "--${flag}"|"--${flag}="*|"-${flag}"|"-${flag}="*)
+        return 0
+        ;;
+    esac
+  done
+  return 1
+}
+
+require_executable() {
+  local path="$1"
+  local label="$2"
+  [[ -x "${path}" ]] || die "${label} not found or not executable: ${path}"
+}
+
+has_session_group() {
+  id -nG | tr ' ' '\n' | grep -Fxq "$1"
+}
+
+has_configured_group() {
+  id -nG "${USER}" | tr ' ' '\n' | grep -Fxq "$1"
+}
+
+check_required_groups() {
+  local -a required_groups=(kvm video render cvdnetwork)
+  local -a missing_groups=()
+  local -a inactive_groups=()
+  local -a add_groups=()
+  local group
+
+  for group in "${required_groups[@]}"; do
+    if getent group "${group}" >/dev/null 2>&1 && ! has_session_group "${group}"; then
+      missing_groups+=("${group}")
+      if has_configured_group "${group}"; then
+        inactive_groups+=("${group}")
+      else
+        add_groups+=("${group}")
+      fi
+    fi
+  done
+
+  if [[ "${#missing_groups[@]}" -eq 0 ]]; then
+    return 0
+  fi
+
+  cat >&3 <<EOF
+[${SCRIPT_NAME}] error: current shell is missing required groups.
+
+Active groups:
+  $(id -nG)
+
+Missing groups:
+  ${missing_groups[*]}
+
+EOF
+
+  if [[ "${#add_groups[@]}" -gt 0 ]]; then
+    cat >&3 <<EOF
+To add the missing account membership:
+  sudo usermod -aG ${add_groups[*]} ${USER}
+
+EOF
+  fi
+
+  if [[ "${#inactive_groups[@]}" -gt 0 ]]; then
+    cat >&3 <<EOF
+Configured on the account but not active in this login session:
+  ${inactive_groups[*]}
+
+EOF
+  fi
+
+  cat >&3 <<EOF
+
+Log out fully and back in after updating group membership.
+EOF
+  exit 1
+}
+
+resolve_launcher_log() {
+  local -a candidates=(
+    "${CVD_HOME_DIR}/cuttlefish/instances/cvd-1/logs/launcher.log"
+    "${CVD_HOME_DIR}/cvd-1/logs/launcher.log"
+  )
+  local candidate
+
+  for candidate in "${candidates[@]}"; do
+    if [[ -e "${candidate}" ]]; then
+      printf '%s\n' "${candidate}"
+      return 0
+    fi
+  done
+
+  printf '%s\n' "${candidates[0]}"
+}
+
+resolve_config_json() {
+  local -a candidates=(
+    "${CVD_HOME_DIR}/cuttlefish/instances/cvd-1/cuttlefish_config.json"
+    "${CVD_HOME_DIR}/cvd-1/cuttlefish_config.json"
+  )
+  local candidate
+
+  for candidate in "${candidates[@]}"; do
+    if [[ -f "${candidate}" ]]; then
+      printf '%s\n' "${candidate}"
+      return 0
+    fi
+  done
+
+  printf '%s\n' "${candidates[0]}"
+}
+
+resolve_adb_serial() {
+  local config_path
+  local adb_ip_and_port
+  local adb_port
+
+  config_path="$(resolve_config_json)"
+  if [[ -f "${config_path}" ]]; then
+    adb_ip_and_port="$(grep -oE '"adb_ip_and_port"[[:space:]]*:[[:space:]]*"[^"]+"' "${config_path}" | head -n1 | sed -E 's/.*"([^"]+)"$/\1/' || true)"
+    if [[ -n "${adb_ip_and_port}" ]]; then
+      printf '%s\n' "${adb_ip_and_port}"
+      return 0
+    fi
+
+    adb_port="$(grep -oE '"adb_host_port"[[:space:]]*:[[:space:]]*[0-9]+' "${config_path}" | head -n1 | grep -oE '[0-9]+$' || true)"
+    if [[ -n "${adb_port}" ]]; then
+      printf '0.0.0.0:%s\n' "${adb_port}"
+      return 0
+    fi
+  fi
+
+  printf '0.0.0.0:6520\n'
+}
+
+has_live_cvd_processes() {
+  local -a patterns=(
+    "${CVD_HOME_DIR}/cuttlefish/instances"
+    "${CVD_HOME_DIR}/cvd-1"
+    "${CVD_HOST_OUT}/bin/run_cvd"
+    "${CVD_HOST_OUT}/bin/crosvm"
+    "${CVD_HOST_OUT}/bin/process_restarter"
+    "${CVD_BIN}"
+  )
+  local pattern
+
+  for pattern in "${patterns[@]}"; do
+    if pgrep -f "${pattern}" >/dev/null 2>&1; then
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+cleanup_user_processes() {
+  local -a patterns=(
+    "${CVD_HOME_DIR}/cuttlefish/instances"
+    "${CVD_HOME_DIR}/cvd-1"
+    "${CVD_HOST_OUT}/bin/run_cvd"
+    "${CVD_HOST_OUT}/bin/crosvm"
+    "${CVD_HOST_OUT}/bin/process_restarter"
+    "${CVD_HOST_OUT}/bin/socket_vsock_proxy"
+    "${CVD_HOST_OUT}/bin/wmediumd"
+    "${CVD_HOST_OUT}/bin/webRTC"
+  )
+  local -a pids=()
+  local pattern
+  local pid
+
+  for pattern in "${patterns[@]}"; do
+    while read -r pid; do
+      [[ -n "${pid}" ]] || continue
+      [[ "${pid}" == "$$" ]] && continue
+      pids+=("${pid}")
+    done < <(pgrep -f "${pattern}" || true)
+  done
+
+  if [[ "${#pids[@]}" -eq 0 ]]; then
+    return 0
+  fi
+
+  mapfile -t pids < <(printf '%s\n' "${pids[@]}" | sort -u)
+  log "stopping leftover Cuttlefish processes: ${pids[*]}"
+  kill "${pids[@]}" 2>/dev/null || true
+  sleep 2
+  kill -9 "${pids[@]}" 2>/dev/null || true
+}
+
+within_deadline() {
+  local deadline="$1"
+  [[ "${deadline}" -eq 0 || ${SECONDS} -lt ${deadline} ]]
+}
+
+make_deadline() {
+  local timeout_sec="$1"
+  if [[ "${timeout_sec}" -gt 0 ]]; then
+    printf '%s\n' "$((SECONDS + timeout_sec))"
+  else
+    printf '0\n'
+  fi
+}
+
+wait_for_adb_device() {
+  local adb_serial="$1"
+  local deadline="$2"
+
+  while within_deadline "${deadline}"; do
+    adb connect "${adb_serial}" >/dev/null 2>&1 || true
+    if [[ "$(adb -s "${adb_serial}" get-state 2>/dev/null || true)" == "device" ]]; then
+      return 0
+    fi
+    sleep 2
+  done
+
+  return 1
+}
+
+wait_for_boot() {
+  local launcher_log="$1"
+  local deadline="$2"
+  local min_mtime="${3:-0}"
+
+  while within_deadline "${deadline}"; do
+    if [[ -f "${launcher_log}" ]]; then
+      local log_mtime
+      log_mtime="$(stat -c '%Y' "${launcher_log}" 2>/dev/null || echo 0)"
+      if [[ "${log_mtime}" -ge "${min_mtime}" ]] && grep -Fq "${CVD_BOOT_MESSAGE}" "${launcher_log}"; then
+        return 0
+      fi
+    fi
+    if ! has_live_cvd_processes; then
+      return 1
+    fi
+    sleep 2
+  done
+
+  return 1
+}
+
+maybe_start_scrcpy() {
+  local adb_serial="$1"
+  local deadline="$2"
+  local fullscreen_mode="${3:-false}"
+
+  if ! command -v scrcpy >/dev/null 2>&1; then
+    log "scrcpy not found; skipping client launch."
+    return 0
+  fi
+
+  if ! command -v adb >/dev/null 2>&1; then
+    log "adb not found; skipping scrcpy startup."
+    return 0
+  fi
+
+  if pgrep -x scrcpy >/dev/null 2>&1; then
+    log "scrcpy is already running; skipping second launch."
+    return 0
+  fi
+
+  if ! wait_for_adb_device "${adb_serial}" "${deadline}"; then
+    log "adb device ${adb_serial} did not become ready before timeout."
+    return 1
+  fi
+
+  sleep 3
+  log "starting scrcpy for ${adb_serial}"
+  if [[ "${fullscreen_mode}" == "true" ]]; then
+    scrcpy -s "${adb_serial}" --force-adb-forward --fullscreen >/dev/null 2>&1 &
+  else
+    scrcpy -s "${adb_serial}" --force-adb-forward >/dev/null 2>&1 &
+  fi
+  disown || true
+  return 0
+}
+
+start_cvd() {
+  local fullscreen_mode="${1:-false}"
+  shift || true
+  local -a args=()
+  local launcher_log
+  local adb_serial
+  local boot_deadline
+  local scrcpy_deadline
+  local start_epoch
+
+  require_executable "${CVD_BIN}" "cvd launcher"
+  check_required_groups
+  launcher_log="$(resolve_launcher_log)"
+  adb_serial="$(resolve_adb_serial)"
+  start_epoch="$(date +%s)"
+
+  scrcpy_deadline="$(make_deadline "${CVD_START_SCRCPY_TIMEOUT_SEC}")"
+
+  if has_live_cvd_processes; then
+    log "Cuttlefish is already running under ${CVD_HOME_DIR}"
+    maybe_start_scrcpy "${adb_serial}" "${scrcpy_deadline}" "${fullscreen_mode}" || true
+    respond "Android virtual device runnning"
+    return 0
+  fi
+
+  if ! user_supplied_flag "cpus" "$@"; then
+    args+=("--cpus=${CVD_CPUS}")
+  fi
+  if ! user_supplied_flag "memory_mb" "$@"; then
+    args+=("--memory_mb=${CVD_MEMORY_MB}")
+  fi
+  if ! user_supplied_flag "gpu_mode" "$@"; then
+    args+=("--gpu_mode=${CVD_GPU_MODE}")
+  fi
+  if ! user_supplied_flag "gpu_vhost_user_mode" "$@"; then
+    args+=("--gpu_vhost_user_mode=${CVD_GPU_VHOST_USER_MODE}")
+  fi
+  if ! user_supplied_flag "enable_gpu_udmabuf" "$@"; then
+    args+=("--enable_gpu_udmabuf=${CVD_ENABLE_GPU_UDMABUF}")
+  fi
+  if ! user_supplied_flag "use_cvdalloc" "$@"; then
+    args+=("--use_cvdalloc=${CVD_USE_CVDALLOC}")
+  fi
+  if ! user_supplied_flag "vhost_net" "$@"; then
+    args+=("--vhost_net=${CVD_VHOST_NET}")
+  fi
+  if ! user_supplied_flag "vhost_user_vsock" "$@"; then
+    args+=("--vhost_user_vsock=${CVD_VHOST_USER_VSOCK}")
+  fi
+  if ! user_supplied_flag "enable_wifi" "$@"; then
+    args+=("--enable_wifi=${CVD_ENABLE_WIFI}")
+  fi
+  if ! user_supplied_flag "enable_host_bluetooth" "$@"; then
+    args+=("--enable_host_bluetooth=${CVD_ENABLE_HOST_BLUETOOTH}")
+  fi
+  if ! user_supplied_flag "netsim" "$@"; then
+    args+=("--netsim=${CVD_NETSIM}")
+  fi
+  if ! user_supplied_flag "netsim_bt" "$@"; then
+    args+=("--netsim_bt=${CVD_NETSIM_BT}")
+  fi
+  if ! user_supplied_flag "enable_host_uwb" "$@"; then
+    args+=("--enable_host_uwb=${CVD_ENABLE_HOST_UWB}")
+  fi
+  if ! user_supplied_flag "netsim_uwb" "$@"; then
+    args+=("--netsim_uwb=${CVD_NETSIM_UWB}")
+  fi
+  if ! user_supplied_flag "x_res" "$@"; then
+    args+=("--x_res=${CVD_X_RES}")
+  fi
+  if ! user_supplied_flag "y_res" "$@"; then
+    args+=("--y_res=${CVD_Y_RES}")
+  fi
+  if ! user_supplied_flag "dpi" "$@"; then
+    args+=("--dpi=${CVD_DPI}")
+  fi
+  if ! user_supplied_flag "report_anonymous_usage_stats" "$@"; then
+    args+=("-report_anonymous_usage_stats=${CVD_REPORT_USAGE_STATS}")
+  fi
+
+  args+=("$@")
+
+  log "starting Cuttlefish"
+  log "HOME=${CVD_HOME_DIR}"
+  log "ANDROID_HOST_OUT=${CVD_HOST_OUT}"
+  log "ANDROID_PRODUCT_OUT=${CVD_PRODUCT_OUT}"
+  log "gpu_mode=${CVD_GPU_MODE}"
+  log "launcher_log=${launcher_log}"
+  log "launch command: $(shell_join "${CVD_BIN}" "${args[@]}")"
+
+  (
+    cd "${CVD_PRODUCT_OUT}"
+    env \
+      HOME="${CVD_HOME_DIR}" \
+      ANDROID_HOST_OUT="${CVD_HOST_OUT}" \
+      ANDROID_SOONG_HOST_OUT="${CVD_HOST_OUT}" \
+      ANDROID_PRODUCT_OUT="${CVD_PRODUCT_OUT}" \
+      "${CVD_BIN}" "${args[@]}"
+  ) &
+
+  log "launcher pid: $!"
+
+  boot_deadline="$(make_deadline "${CVD_BOOT_TIMEOUT_SEC}")"
+  if ! wait_for_boot "${launcher_log}" "${boot_deadline}" "${start_epoch}"; then
+    if [[ -f "${launcher_log}" ]]; then
+      tail -n 80 "${launcher_log}" >&2 || true
+    fi
+    die "Cuttlefish did not reach boot completion"
+  fi
+
+  log "boot completed after seeing: ${CVD_BOOT_MESSAGE}"
+  scrcpy_deadline="$(make_deadline "${CVD_START_SCRCPY_TIMEOUT_SEC}")"
+  maybe_start_scrcpy "${adb_serial}" "${scrcpy_deadline}" "${fullscreen_mode}" || true
+  respond "Android virtual device runnning"
+}
+
+stop_cvd() {
+  require_executable "${CVD_CLI_BIN}" "cvd CLI"
+
+  log "stopping Cuttlefish"
+  env \
+    HOME="${CVD_HOME_DIR}" \
+    ANDROID_HOST_OUT="${CVD_HOST_OUT}" \
+    ANDROID_SOONG_HOST_OUT="${CVD_HOST_OUT}" \
+    ANDROID_PRODUCT_OUT="${CVD_PRODUCT_OUT}" \
+    "${CVD_CLI_BIN}" stop --clear_instance_dirs "$@" || true
+  env \
+    HOME="${CVD_HOME_DIR}" \
+    ANDROID_HOST_OUT="${CVD_HOST_OUT}" \
+    ANDROID_SOONG_HOST_OUT="${CVD_HOST_OUT}" \
+    ANDROID_PRODUCT_OUT="${CVD_PRODUCT_OUT}" \
+    "${CVD_CLI_BIN}" clear >/dev/null 2>&1 || true
+  cleanup_user_processes
+  respond "Android virtual device stopped"
+}
+
+restart_cvd() {
+  stop_cvd
+  start_cvd false "$@"
+}
+
+status_cvd() {
+  if has_live_cvd_processes; then
+    respond "Android virtual device runnning"
+  else
+    respond "Android virtual device stopped"
+  fi
+}
+
+main() {
+  local command="${1:-help}"
+
+  case "${command}" in
+    start)
+      shift
+      start_cvd false "$@"
+      ;;
+    startfs)
+      shift
+      start_cvd true "$@"
+      ;;
+    stop)
+      shift
+      stop_cvd "$@"
+      ;;
+    restart)
+      shift
+      restart_cvd "$@"
+      ;;
+    status)
+      shift
+      status_cvd "$@"
+      ;;
+    help|-h|--help)
+      usage
+      ;;
+    *)
+      usage >&2
+      exit 1
+      ;;
+  esac
+}
+
+main "$@"
