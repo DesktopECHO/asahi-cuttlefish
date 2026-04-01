@@ -1,10 +1,7 @@
-# Android Cuttlefish Fork for Fedora and Asahi Linux
+# Android Cuttlefish and CrosVM for Fedora Asahi Remix
 
-This repository is a full fork of
-[google/android-cuttlefish](https://github.com/google/android-cuttlefish).
-Fedora packaging, host integration, and Asahi-specific workflow changes live
-directly in this tree. You no longer need to clone upstream and apply an RPM
-overlay on top of it.
+This repository is a fork of
+[google/android-cuttlefish](https://github.com/google/android-cuttlefish) refactored for RPM distributions..
 
 [Cuttlefish](https://source.android.com/setup/create/cuttlefish) is a
 configurable Android Virtual Device (AVD) that runs on Linux x86_64 and
@@ -13,14 +10,11 @@ aarch64 hosts as well as Google Compute Engine.
 ## Quick start on Fedora Asahi
 
 ```bash
-# 1. Clone this fork
+# 1. Clone the repo
 git clone https://github.com/DesktopECHO/asahi-cuttlefish.git
 cd asahi-cuttlefish
 
-# 2. Optional: keep Google's repo as an upstream remote
-git remote add upstream https://github.com/google/android-cuttlefish.git
-
-# 3. Start the build from the repo root
+# 2. Start the build from the repo root
 ./tools/buildutils/build_packages.sh
 # If this repo is mounted at /asahi-cuttlefish, the equivalent command is:
 # /asahi-cuttlefish/tools/buildutils/build_packages.sh
