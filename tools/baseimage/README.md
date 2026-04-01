@@ -3,6 +3,7 @@
 ## Setup
 
 ```
+cd tools/baseimage
 gcloud auth application-default login
 ```
 
@@ -32,6 +33,8 @@ go run ./cmd/create_gce_base_image \
 ```
 
 ## Step 3. Create image with cuttlefish RPM packages installed.
+
+Run these `go run ./cmd/...` commands from the `tools/baseimage` directory.
 
 ```
 go run ./cmd/gce_install_cuttlefish_packages \

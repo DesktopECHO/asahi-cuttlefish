@@ -1,7 +1,7 @@
 # Android Cuttlefish and CrosVM for Fedora Asahi Remix
 
 This repository is a fork of
-[google/android-cuttlefish](https://github.com/google/android-cuttlefish) refactored for RPM distributions..
+[google/android-cuttlefish](https://github.com/google/android-cuttlefish), adapted for RPM-based distributions like Fedora Asahi Remix. 
 
 [Cuttlefish](https://source.android.com/setup/create/cuttlefish) is a
 configurable Android Virtual Device (AVD) that runs on Linux x86_64 and
@@ -10,34 +10,68 @@ aarch64 hosts as well as Google Compute Engine.
 ## Quick start on Fedora Asahi
 
 ```bash
-# 1. Clone the repo
+# 1. Clone the Asahi-Cuttlefish repo:
 git clone https://github.com/DesktopECHO/asahi-cuttlefish.git
 cd asahi-cuttlefish
 
 # 2. Start the build from the repo root
 ./tools/buildutils/build_packages.sh
-# If this repo is mounted at /asahi-cuttlefish, the equivalent command is:
-# /asahi-cuttlefish/tools/buildutils/build_packages.sh
+  It will take 30-60 min to build Cuttlefish and CrosVM.
 
-# 4. Install the local host packages and bundled AOSP tree
+# 3. Install the local host packages and bundled AOSP tree
 sudo dnf install \
   ./out/rpmbuild/RPMS/*/cuttlefish-base-*.rpm \
   ./out/rpmbuild/RPMS/*/cuttlefish-user-*.rpm \
   ./out/rpmbuild/RPMS/*/cuttlefish-aosp-*.rpm
 
-# 5. Add yourself to the required groups and reboot
+# 4. Add yourself to the required groups and reboot
 sudo usermod -aG kvm,cvdnetwork,render,video "$USER"
 sudo reboot
 
-# 6. Launch
-acf start \
-  --gpu_mode=guest_swiftshader \
-  --cpus=8 --memory_mb=8192 \
-  --x_res=1280 --y_res=720 --dpi=160
+# 5. Launch
+acf start 
+``` 
+
+A few seconds after the virtual device is started, `scrcpy` will automatically open.  Alternatively, visit `https://localhost:8443` in a browser to view the WebRTC virtual device console.
+
+## Managing the VM with `acf`
+
+After the RPMs are installed, `acf` is available on your `PATH` and can be used
+to start, stop, and restart the packaged Cuttlefish environment.
+
+```bash
+# Start a windowed VM
+acf start --gpu_mode=guest_swiftshader
+
+# Start a fullscreen VM
+acf startfs --gpu_mode=guest_swiftshader
+
+# Check whether the VM is running
+acf status
+
+# Stop the VM and clear instance state
+acf stop
+
+# Restart with new launch arguments
+acf restart --gpu_mode=guest_swiftshader --cpus=8 --memory_mb=8192
+
+# Show the built-in usage text
+acf help
 ```
 
-After launch, open `https://localhost:8443` in a browser and connect to
-`cvd-1`.
+`acf start`, `acf startfs`, and `acf restart` pass extra arguments directly to
+`cvd_internal_start`, so you can override launch settings on the command line.
+`startfs` launches `scrcpy` in fullscreen mode after boot. `stop` calls `cvd
+stop --clear_instance_dirs` and cleans up local Cuttlefish processes.
+
+By default `acf` uses:
+
+- host tools from `/usr/lib/cuttlefish-common`
+- the packaged AOSP tree from `/usr/share/cuttlefish-common/aosp`
+- host Bluetooth, with Wi-Fi, netsim, and UWB disabled unless you override them
+
+For this Fedora Asahi workflow, `guest_swiftshader` is the documented GPU mode
+to pass when launching the VM.
 
 ## Fedora RPM packages
 

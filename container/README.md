@@ -1,7 +1,8 @@
 # Container images
 
-We provide container images with installed cuttlefish debian packages inside;
-including `cuttlefish-base`, `cuttlefish-user`, and `cuttlefish-orchestration`.
+We provide container images with installed Cuttlefish RPM packages inside,
+including `cuttlefish-base`, `cuttlefish-user`, and
+`cuttlefish-orchestration`.
 Currently it's available for x86_64 and ARM64 architectures.
 
 ## Download docker image
@@ -20,18 +21,29 @@ Please refer to
 
 ## Build container image manually
 
-To build container image, building host debian packages is required in
-advance.
-Please refer to
-[tools/buildutils/cw/README.md](../tools/buildutils/cw/README.md) for building
-host debian packages including `base` and `frontend`.
+For `container/image-builder.sh -m dev`, build the host RPM packages first.
+Please refer to [tools/buildutils/cw/README.md](../tools/buildutils/cw/README.md)
+for containerized RPM builds, or use `./tools/buildutils/build_packages.sh`
+from the repo root.
+
+The dev container build copies `cuttlefish-*.rpm` from the repository root,
+so stage the RPMs there before building the image:
+
+```bash
+cp ./out/rpmbuild/RPMS/*/cuttlefish-base-*.rpm .
+cp ./out/rpmbuild/RPMS/*/cuttlefish-user-*.rpm .
+cp ./out/rpmbuild/RPMS/*/cuttlefish-orchestration-*.rpm .
+```
+
+The `stable`, `unstable`, and `nightly` modes fetch packages from the
+configured package repository and do not require local RPM files.
 
 ### Docker
 
 Please run below command to build docker image manually.
 
 ```bash
-cd /path/to/android-cuttlefish
+cd /path/to/asahi-cuttlefish
 container/image-builder.sh -m dev -c docker
 ```
 
@@ -49,7 +61,7 @@ cuttlefish-orchestration latest 0123456789ab   2 minutes ago    690MB
 Please run below command to build podman image manually.
 
 ```bash
-cd /path/to/android-cuttlefish
+cd /path/to/asahi-cuttlefish
 sudo container/image-builder.sh -m dev -c podman
 ```
 

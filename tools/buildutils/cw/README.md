@@ -4,7 +4,7 @@
 
 ## Build the image
 
-The build image command must be run at the root of the `android-cuttlefish` repo directory.
+The build image command must be run at the root of this repository checkout.
 
 Enabling Docker [BuildKit](https://docs.docker.com/build/buildkit/) is required
 on Docker version below 23.0 to build this image.
@@ -18,7 +18,9 @@ docker build \
 
 ## Build the package
 
-The run container command must be run at the root of the `android-cuttlefish` repo directory.
+The run container command must be run at the root of this repository checkout.
+
+Built RPMs are written under `out/rpmbuild/RPMS/`.
 
 ### base
 
