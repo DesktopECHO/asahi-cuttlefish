@@ -41,10 +41,10 @@ to start, stop, and restart the packaged Cuttlefish environment.
 
 ```bash
 # Start a windowed VM
-acf start --gpu_mode=guest_swiftshader
+acf start 
 
 # Start a fullscreen VM
-acf startfs --gpu_mode=guest_swiftshader
+acf startfs 
 
 # Check whether the VM is running
 acf status
