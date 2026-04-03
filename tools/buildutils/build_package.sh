@@ -73,10 +73,12 @@ readonly REPO_DIR="$(realpath "$(dirname "$0")/../..")"
 readonly VERSION_FILE="${REPO_DIR}/packaging/VERSION"
 readonly VERSION="$(tr -d '\n' < "${VERSION_FILE}")"
 readonly RPMBUILD_TOPDIR="${REPO_DIR}/out/rpmbuild"
+readonly RPMBUILD_WORK_ROOT="${RPMBUILD_TOPDIR}/work"
 readonly TAR_BASENAME="android-cuttlefish-${VERSION}"
 readonly SOURCE_TARBALL="${RPMBUILD_TOPDIR}/SOURCES/${TAR_BASENAME}.tar.gz"
 readonly SOURCE_MANIFEST="${RPMBUILD_TOPDIR}/SOURCES/${TAR_BASENAME}.manifest"
 readonly SOURCE_STAGING_DIR="${RPMBUILD_TOPDIR}/SOURCES/${TAR_BASENAME}"
+declare -a build_workdirs=()
 
 function normalize_spec_name() {
   local spec_name="$1"
@@ -152,12 +154,23 @@ function refresh_source_tarball_if_needed() {
   rm -rf "${SOURCE_STAGING_DIR}"
 }
 
+function cleanup_build_workdirs() {
+  local workdir
+  for workdir in "${build_workdirs[@]}"; do
+    [[ -d "${workdir}" ]] || continue
+    rm -rf "${workdir}" || true
+  done
+}
+
+trap cleanup_build_workdirs EXIT
+
 mkdir -p \
   "${RPMBUILD_TOPDIR}/BUILD" \
   "${RPMBUILD_TOPDIR}/BUILDROOT" \
   "${RPMBUILD_TOPDIR}/RPMS" \
   "${RPMBUILD_TOPDIR}/SOURCES" \
-  "${RPMBUILD_TOPDIR}/SPECS"
+  "${RPMBUILD_TOPDIR}/SPECS" \
+  "${RPMBUILD_WORK_ROOT}"
 
 refresh_source_tarball_if_needed
 
@@ -200,13 +213,15 @@ fi
 
 pushd "${pushd_args[0]}"
 for spec in "${specs[@]}"; do
+  spec_workdir="$(mktemp -d "${RPMBUILD_WORK_ROOT}/$(normalize_spec_name "${spec}").XXXXXX")"
+  build_workdirs+=("${spec_workdir}")
   echo "Building RPM from ${spec}"
   rpmbuild \
     --define "_topdir ${RPMBUILD_TOPDIR}" \
     --define "_sourcedir ${RPMBUILD_TOPDIR}/SOURCES" \
     --define "_rpmdir ${RPMBUILD_TOPDIR}/RPMS" \
-    --define "_builddir ${RPMBUILD_TOPDIR}/BUILD" \
-    --define "_buildrootdir ${RPMBUILD_TOPDIR}/BUILDROOT" \
+    --define "_builddir ${spec_workdir}/BUILD" \
+    --define "_buildrootdir ${spec_workdir}/BUILDROOT" \
     -bb "${spec}"
 done
 popd

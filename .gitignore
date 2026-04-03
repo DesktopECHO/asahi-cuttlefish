@@ -1,3 +1,5 @@
 .DS_Store
 /aosp
 /out
+*.lock
+.*/settings.json

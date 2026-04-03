@@ -63,8 +63,9 @@ acf help
 
 `acf start`, `acf startfs`, and `acf restart` pass extra arguments directly to
 `cvd_internal_start`, so you can override launch settings on the command line.
-`startfs` launches `scrcpy` in fullscreen mode after boot. `stop` calls `cvd
-stop --clear_instance_dirs` and cleans up local Cuttlefish processes.
+`startfs` launches `scrcpy` in fullscreen mode after boot. `stop` calls the
+matching low-level stop helper (`cvd_internal_stop` or `stop_cvd`) with
+`--clear_instance_dirs` and then cleans up local Cuttlefish processes.
 
 By default `acf` uses:
 

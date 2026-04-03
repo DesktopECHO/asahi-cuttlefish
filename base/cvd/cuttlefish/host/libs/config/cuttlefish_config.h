@@ -443,6 +443,7 @@ class CuttlefishConfig {
     Arch target_arch() const;
 
     int cpus() const;
+    bool prefer_performance_cores() const;
 
     std::string vcpu_config_path() const;
 
@@ -677,6 +678,7 @@ class CuttlefishConfig {
     void set_device_type(DeviceType type);
     void set_target_arch(Arch target_arch);
     void set_cpus(int cpus);
+    void set_prefer_performance_cores(bool prefer_performance_cores);
     void set_vcpu_config_path(const std::string& vcpu_config_path);
     void set_data_policy(DataImagePolicy data_policy);
     void set_blank_data_image_mb(int blank_data_image_mb);
@@ -937,4 +939,3 @@ bool VmManagerIsQemu(const CuttlefishConfig&);
 bool VmManagerIsGem5(const CuttlefishConfig&);
 
 }  // namespace cuttlefish
-

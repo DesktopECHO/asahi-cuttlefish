@@ -158,6 +158,7 @@ message Vm {
   repeated CustomAction custom_actions = 9;
   // Desired user space page size.
   optional UserPageSize page_size = 10;
+  optional bool prefer_performance_cores = 11;
 }
 
 message Crosvm {

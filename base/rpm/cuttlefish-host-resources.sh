@@ -71,6 +71,8 @@ start_dnsmasq() {
 stop_dnsmasq() {
   if [ -f /var/run/cuttlefish-dnsmasq-"$1".pid ]; then
     kill "$(cat /var/run/cuttlefish-dnsmasq-"$1".pid)"
+    rm -f /var/run/cuttlefish-dnsmasq-"$1".pid
+    rm -f /var/run/cuttlefish-dnsmasq-"$1".leases
   fi
 }
 
