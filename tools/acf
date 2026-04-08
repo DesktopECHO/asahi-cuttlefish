@@ -90,7 +90,7 @@ declare -A CVD_BOOT_DEFAULTS=(
 # Overlay Option Default
 # ============================================================================
 declare -A CVD_OVERLAY_DEFAULTS=(
-  [use_overlay]="false"
+  [use_overlay]="true"
 )
 
 # Convenience variables (for backward compatibility)
@@ -185,7 +185,6 @@ usage() {
 Usage:
 
   ${SCRIPT_NAME} start [cvd_internal_start args...]       · Start windowed
-  ${SCRIPT_NAME} startfs [cvd_internal_start args...]     · Start fullscreen
   ${SCRIPT_NAME} stop [stop_cvd args...]
   ${SCRIPT_NAME} reset [stop_cvd args...]                 · Stop + clear state
   ${SCRIPT_NAME} restart [cvd_internal_start args...]
@@ -196,7 +195,6 @@ Notes:
 
   - Edit the variables at the top of this script to change defaults.
   - Extra arguments after 'start' are passed directly to cvd_internal_start.
-  - Extra arguments after 'startfs' are passed directly to cvd_internal_start.
   - Extra arguments after 'stop' are passed directly to stop_cvd.
   - 'stop' preserves instance data (apps/userdata).
   - Extra arguments after 'reset' are passed directly to stop_cvd.
@@ -494,6 +492,17 @@ resolve_adb_serial() {
 
 has_live_cvd_processes() {
   pgrep -f "${CVD_PROCESS_REGEX}" >/dev/null 2>&1
+}
+
+stop_dnsmasq() {
+  local pid_file
+  for pid_file in /var/tmp/cvd/cuttlefish-dnsmasq-*.pid /var/run/cuttlefish-dnsmasq-*.pid; do
+    [[ -f "${pid_file}" ]] || continue
+    kill "$(cat "${pid_file}")" 2>/dev/null || true
+    rm -f "${pid_file}"
+    rm -f "${pid_file%.pid}.leases"
+  done
+  pkill -f 'dnsmasq.*cvd-' 2>/dev/null || true
 }
 
 cleanup_user_processes() {
@@ -824,6 +833,14 @@ start_cvd() {
   apply_default_args CVD_OVERLAY_DEFAULTS args "$@"
 
   args+=("$@")
+
+  local tz
+  tz="$(readlink /etc/localtime 2>/dev/null | sed 's|.*/zoneinfo/||')"
+  if [[ -n "${tz}" ]]; then
+    args+=("--extra_bootconfig_args=androidboot.timezone=\"${tz}\"")
+    log "timezone: ${tz}"
+  fi
+
   wifi_enabled="$(flag_value "enable_wifi" "${CVD_ENABLE_WIFI}" "${args[@]}")"
 
   log "starting Cuttlefish"
@@ -904,6 +921,7 @@ stop_cvd_internal() {
     run_with_cvd_env "${CVD_CLI_BIN}" clear >/dev/null 2>&1 || true
   fi
 
+  stop_dnsmasq
   cleanup_user_processes
 
   if has_live_cvd_processes; then
@@ -952,15 +970,15 @@ main() {
       shift
       run_timed_operation "started" start_cvd false "$@"
       ;;
-    startfs)
-      redirect_start_logs
-      shift
-      run_timed_operation "started" start_cvd true "$@"
-      ;;
     stop)
-      redirect_stop_logs
       shift
-      run_timed_operation "stopped" stop_cvd "$@"
+      stop_dnsmasq
+      env \
+        HOME=/usr/share/cuttlefish-common/aosp \
+        ANDROID_HOST_OUT=/usr/lib/cuttlefish-common \
+        ANDROID_SOONG_HOST_OUT=/usr/lib/cuttlefish-common \
+        ANDROID_PRODUCT_OUT=/usr/share/cuttlefish-common/aosp \
+        /usr/lib/cuttlefish-common/bin/stop_cvd "$@" >&3 2>&3
       ;;
     reset)
       shift
