@@ -100,3 +100,73 @@ func TestRandStr(t *testing.T) {
 		t.Error("randStr returned two equal strings of len 100")
 	}
 }
+
+// TestWsClientImplementsClient verifies WsClient implements the Client interface.
+func TestWsClientImplementsClient(t *testing.T) {
+	var _ Client = (*WsClient)(nil)
+}
+
+// TestWsClientClose verifies that Close() can be called multiple times safely.
+func TestWsClientClose(t *testing.T) {
+	c := &WsClient{
+		send: make(chan interface{}, 1),
+		done: make(chan struct{}),
+	}
+
+	// First close should work
+	c.Close()
+
+	// Verify done channel is closed
+	select {
+	case <-c.done:
+		// Expected
+	default:
+		t.Error("done channel not closed after Close()")
+	}
+
+	// Second close should not panic
+	c.Close()
+}
+
+// TestWsClientDone verifies the Done() channel behavior.
+func TestWsClientDone(t *testing.T) {
+	c := &WsClient{
+		send: make(chan interface{}, 1),
+		done: make(chan struct{}),
+	}
+
+	done := c.Done()
+	if done == nil {
+		t.Error("Done() returned nil")
+	}
+
+	select {
+	case <-done:
+		t.Error("done channel closed before Close() called")
+	default:
+		// Expected
+	}
+
+	c.Close()
+	select {
+	case <-done:
+		// Expected
+	default:
+		t.Error("done channel not closed after Close()")
+	}
+}
+
+// TestWsClientSendAfterClose verifies Send() returns an error after Close().
+func TestWsClientSendAfterClose(t *testing.T) {
+	c := &WsClient{
+		send: make(chan interface{}, 1),
+		done: make(chan struct{}),
+	}
+
+	c.Close()
+
+	err := c.Send("test message")
+	if err == nil {
+		t.Error("Send after close should return an error")
+	}
+}
