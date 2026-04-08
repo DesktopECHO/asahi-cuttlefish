@@ -20,11 +20,11 @@ cd asahi-cuttlefish
 ./tools/buildutils/build_packages.sh
   It will take 30-60 min to build Cuttlefish and CrosVM.
 
-# 3. Install the local host packages and bundled AOSP tree
+# 3. Install the local host packages and bundled LineageOS tree
 sudo dnf install \
   ./out/rpmbuild/RPMS/*/cuttlefish-base-*.rpm \
   ./out/rpmbuild/RPMS/*/cuttlefish-user-*.rpm \
-  ./out/rpmbuild/RPMS/*/cuttlefish-aosp-*.rpm
+  ./out/rpmbuild/RPMS/*/cuttlefish-lineageos-*.rpm
 
 # 4. Add yourself to the required groups and reboot
 sudo usermod -aG kvm,cvdnetwork,render,video "$USER"
@@ -70,7 +70,8 @@ matching low-level stop helper (`cvd_internal_stop` or `stop_cvd`) with
 By default `acf` uses:
 
 - host tools from `/usr/lib/cuttlefish-common`
-- the packaged AOSP tree from `/usr/share/cuttlefish-common/aosp`
+- the packaged LineageOS tree from `/usr/share/cuttlefish-common/lineageos`
+- instance state under `~/.config/cuttlefish`
 - host Bluetooth, with Wi-Fi, netsim, and UWB disabled unless you override them
 
 For this Fedora Asahi workflow, `guest_swiftshader` is the documented GPU mode
@@ -87,12 +88,12 @@ The repo currently builds these Fedora packages:
 * `cuttlefish-integration` - Cloud integration utilities
 * `cuttlefish-defaults` - Optional defaults override service and config
 * `cuttlefish-metrics` - Metrics transmitter binary
-* `cuttlefish-aosp` - Bundled `aosp/` tree installed under
-  `/usr/share/cuttlefish-common/aosp`
+* `cuttlefish-lineageos` - Bundled `lineageos/` tree installed under
+  `/usr/share/cuttlefish-common/lineageos`
 * `cuttlefish-common` - Deprecated compatibility metapackage
 
 For the local Fedora/Asahi workflow, `cuttlefish-base`, `cuttlefish-user`, and
-`cuttlefish-aosp` are the key packages.
+`cuttlefish-lineageos` are the key packages.
 
 ## Notes
 

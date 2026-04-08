@@ -230,7 +230,6 @@ install -Dpm0644 base/rpm/cuttlefish-integration.sysconfig %{buildroot}/etc/sysc
 install -d %{buildroot}/etc/cuttlefish-common
 : > %{buildroot}/etc/cuttlefish-common/cf_defaults
 
-ln -sfn ../lib/cuttlefish-common/bin/cvd %{buildroot}/usr/bin/cvd
 mkdir -p %{buildroot}/usr/lib/cuttlefish-common/bin/aarch64-linux-gnu
 mkdir -p %{buildroot}/usr/lib/cuttlefish-common/bin/x86_64-linux-gnu
 mkdir -p %{buildroot}/usr/lib/cuttlefish-common/lib64
@@ -306,7 +305,6 @@ systemctl daemon-reload >/dev/null 2>&1 || :
 %files
 %license LICENSE
 /bin/acf
-/usr/bin/cvd
 /usr/lib/cuttlefish-common
 /etc/NetworkManager/conf.d/99-cuttlefish.conf
 %config(noreplace) /etc/sysctl.d/99-cuttlefish.conf

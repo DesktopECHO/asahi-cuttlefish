@@ -4,21 +4,21 @@ set -euo pipefail
 
 exec 3>&1
 
-LOG_FILE="/tmp/acf.log"
+mkdir -p $HOME/.config/cuttlefish
 START_LOG_FILE="/tmp/acfstart.log"
-STOP_LOG_FILE="/tmp/acfstop.log"
-mkdir -p "$(dirname "${LOG_FILE}")"
-: > "${LOG_FILE}"
-exec >>"${LOG_FILE}" 2>&1
 
 # ============================================================================
 # Environment Paths
 # ============================================================================
-CVD_HOST_OUT="${ANDROID_HOST_OUT:-/usr/lib/cuttlefish-common}"
-CVD_PRODUCT_OUT="${ANDROID_PRODUCT_OUT:-/usr/share/cuttlefish-common/aosp}"
-: "${CVD_HOME_DIR:=${CVD_PRODUCT_OUT}}"
+CVD_HOST_OUT="/usr/lib/cuttlefish-common"
+CVD_PRODUCT_OUT="/usr/share/cuttlefish-common/lineageos"
+: "${CVD_HOME_DIR:=${HOME}/.config/cuttlefish}"
 CVD_BIN="${CVD_HOST_OUT}/bin/cvd_internal_start"
 CVD_CLI_BIN="${CVD_HOST_OUT}/bin/cvd"
+CVD_STOP_BIN="${CVD_HOST_OUT}/bin/cvd_internal_stop"
+CVD_INSTANCE_DIR="${CVD_HOME_DIR}/cuttlefish/instances/cvd-1"
+CVD_LAUNCHER_LOG="${CVD_INSTANCE_DIR}/logs/launcher.log"
+CVD_CONFIG_PATH="${CVD_INSTANCE_DIR}/cuttlefish_config.json"
 
 # ============================================================================
 # Compute Configuration Defaults (passed to cvd_internal_start)
@@ -81,10 +81,8 @@ declare -A CVD_WIFI_DEFAULTS=(
 # Boot & Logging Configuration Defaults (internal use only)
 # ============================================================================
 declare -A CVD_BOOT_DEFAULTS=(
-  [boot_message]="Virtual device booted successfully"
-  [scrcpy_ready_message]="VIRTUAL_DEVICE_BOOT_COMPLETED"
-  [boot_timeout_sec]="60"
-  [start_scrcpy_timeout_sec]="45"
+  [boot_message]="VIRTUAL_DEVICE_BOOT_COMPLETED"
+  [boot_timeout_sec]="75"
 )
 
 # Overlay Option Default
@@ -115,20 +113,7 @@ CVD_WIFI_AUTO_SSID="${CVD_WIFI_DEFAULTS[wifi_auto_ssid]}"
 CVD_WIFI_AUTO_SECURITY="${CVD_WIFI_DEFAULTS[wifi_auto_security]}"
 CVD_WIFI_AUTO_PASSPHRASE="${CVD_WIFI_DEFAULTS[wifi_auto_passphrase]}"
 CVD_BOOT_MESSAGE="${CVD_BOOT_DEFAULTS[boot_message]}"
-CVD_SCRCPY_READY_MESSAGE="${CVD_BOOT_DEFAULTS[scrcpy_ready_message]}"
 CVD_BOOT_TIMEOUT_SEC="${CVD_BOOT_DEFAULTS[boot_timeout_sec]}"
-CVD_START_SCRCPY_TIMEOUT_SEC="${CVD_BOOT_DEFAULTS[start_scrcpy_timeout_sec]}"
-
-CVD_PROCESS_NAMES=(
-  "cvd_internal_start"
-  "launch_cvd"
-  "run_cvd"
-  "crosvm"
-  "process_restarter"
-  "socket_vsock_proxy"
-  "wmediumd"
-  "webRTC"
-)
 
 CVD_PROCESS_REGEX='(^|/)(cvd_internal_start|launch_cvd|run_cvd|crosvm|process_restarter|socket_vsock_proxy|wmediumd|webRTC)([[:space:]]|$)'
 
@@ -140,6 +125,9 @@ log() {
 
 die() {
   log "error: $*"
+  if [[ -n "${CONSOLE_FAILURE_MESSAGE:-}" ]]; then
+    printf '%s\n' "${CONSOLE_FAILURE_MESSAGE}" >&3
+  fi
   exit 1
 }
 
@@ -150,7 +138,7 @@ respond() {
 console_notify() {
   local action="$1"
   local elapsed_sec="$2"
-  printf 'Android %s in %ss.\n' "${action}" "${elapsed_sec}" >&3
+  printf 'Android virtual device %s in %ss.\n' "${action}" "${elapsed_sec}" >&3
 }
 
 run_timed_operation() {
@@ -173,48 +161,20 @@ redirect_start_logs() {
   exec >"${START_LOG_FILE}" 2>&1
 }
 
-redirect_stop_logs() {
-  mkdir -p "$(dirname "${STOP_LOG_FILE}")"
-  : > "${STOP_LOG_FILE}"
-  exec >"${STOP_LOG_FILE}" 2>&1
-}
-
 usage() {
   local output_fd="${1:-1}"
   cat >&"${output_fd}" <<EOF
+
 Usage:
 
-  ${SCRIPT_NAME} start [cvd_internal_start args...]       · Start windowed
-  ${SCRIPT_NAME} stop [stop_cvd args...]
-  ${SCRIPT_NAME} reset [stop_cvd args...]                 · Stop + clear state
-  ${SCRIPT_NAME} restart [cvd_internal_start args...]
+  ${SCRIPT_NAME} start [--setting=args]
+  ${SCRIPT_NAME} stop
+  ${SCRIPT_NAME} restart
   ${SCRIPT_NAME} status
-  ${SCRIPT_NAME} help
 
-Notes:
+Example:
 
-  - Edit the variables at the top of this script to change defaults.
-  - Extra arguments after 'start' are passed directly to cvd_internal_start.
-  - Extra arguments after 'stop' are passed directly to stop_cvd.
-  - 'stop' preserves instance data (apps/userdata).
-  - Extra arguments after 'reset' are passed directly to stop_cvd.
-  - 'reset' clears instance directories and returns to factory state.
-  - Extra arguments after 'restart' are passed directly to cvd_internal_start.
-  - Common radio/network overrides:
-      --enable_wifi=<true|false>
-      --enable_modem_simulator=<true|false>
-      --enable_host_uwb=<true|false>
-      --netsim_uwb=<true|false>
-  - Current defaults use Wi-Fi/OpenWRT and disable the modem simulator and
-    UWB:
-      --enable_wifi=true
-      --enable_modem_simulator=false
-      --enable_host_uwb=false
-      --netsim_uwb=false
-  - Virtual Wi-Fi auto-connect defaults:
-      ssid=${CVD_WIFI_AUTO_SSID}
-      security=${CVD_WIFI_AUTO_SECURITY}
-      auto_connect=${CVD_WIFI_AUTO_CONNECT}
+  ${SCRIPT_NAME} start --cpus=4 --memory_mb=4096 --x_res=1920 --x_res=1200 --dpi=192 --gpu_mode=gfxstream
 
 EOF
 }
@@ -331,25 +291,21 @@ apply_default_args() {
 }
 
 run_with_cvd_env() {
-  env \
-    HOME="${CVD_HOME_DIR}" \
-    ANDROID_HOST_OUT="${CVD_HOST_OUT}" \
-    ANDROID_SOONG_HOST_OUT="${CVD_HOST_OUT}" \
-    ANDROID_PRODUCT_OUT="${CVD_PRODUCT_OUT}" \
-    "$@"
-}
+  local config_path=""
+  local -a env_args=(
+    "HOME=${CVD_HOME_DIR}"
+    "ANDROID_HOST_OUT=${CVD_HOST_OUT}"
+    "ANDROID_SOONG_HOST_OUT=${CVD_HOST_OUT}"
+    "ANDROID_PRODUCT_OUT=${CVD_PRODUCT_OUT}"
+  )
 
-run_with_cvd_env_and_config() {
-  local config_path="$1"
-  shift
+  if [[ "${1:-}" == "--config" ]]; then
+    config_path="${2:-}"
+    shift 2
+    env_args+=("CUTTLEFISH_CONFIG_FILE=${config_path}")
+  fi
 
-  env \
-    HOME="${CVD_HOME_DIR}" \
-    ANDROID_HOST_OUT="${CVD_HOST_OUT}" \
-    ANDROID_SOONG_HOST_OUT="${CVD_HOST_OUT}" \
-    ANDROID_PRODUCT_OUT="${CVD_PRODUCT_OUT}" \
-    CUTTLEFISH_CONFIG_FILE="${config_path}" \
-    "$@"
+  env "${env_args[@]}" "$@"
 }
 
 has_session_group() {
@@ -416,71 +372,18 @@ EOF
   exit 1
 }
 
-resolve_launcher_log() {
-  local -a candidates=(
-    "${CVD_HOME_DIR}/cuttlefish/instances/cvd-1/logs/launcher.log"
-    "${CVD_HOME_DIR}/cvd-1/logs/launcher.log"
-  )
-  local candidate
-
-  for candidate in "${candidates[@]}"; do
-    if [[ -e "${candidate}" ]]; then
-      printf '%s\n' "${candidate}"
-      return 0
-    fi
-  done
-
-  printf '%s\n' "${candidates[0]}"
-}
-
-resolve_config_json() {
-  local -a candidates=(
-    "${CVD_HOME_DIR}/cuttlefish/instances/cvd-1/cuttlefish_config.json"
-    "${CVD_HOME_DIR}/cvd-1/cuttlefish_config.json"
-  )
-  local candidate
-
-  for candidate in "${candidates[@]}"; do
-    if [[ -f "${candidate}" ]]; then
-      printf '%s\n' "${candidate}"
-      return 0
-    fi
-  done
-
-  printf '%s\n' "${candidates[0]}"
-}
-
-resolve_stop_bin() {
-  local -a candidates=(
-    "${CVD_HOST_OUT}/bin/cvd_internal_stop"
-    "${CVD_HOST_OUT}/bin/stop_cvd"
-  )
-  local candidate
-
-  for candidate in "${candidates[@]}"; do
-    if [[ -x "${candidate}" ]]; then
-      printf '%s\n' "${candidate}"
-      return 0
-    fi
-  done
-
-  printf '%s\n' "${candidates[0]}"
-}
-
 resolve_adb_serial() {
-  local config_path
   local adb_ip_and_port
   local adb_port
 
-  config_path="$(resolve_config_json)"
-  if [[ -f "${config_path}" ]]; then
-    adb_ip_and_port="$(grep -oE '"adb_ip_and_port"[[:space:]]*:[[:space:]]*"[^"]+"' "${config_path}" | head -n1 | sed -E 's/.*"([^"]+)"$/\1/' || true)"
+  if [[ -f "${CVD_CONFIG_PATH}" ]]; then
+    adb_ip_and_port="$(grep -oE '"adb_ip_and_port"[[:space:]]*:[[:space:]]*"[^"]+"' "${CVD_CONFIG_PATH}" | head -n1 | sed -E 's/.*"([^"]+)"$/\1/' || true)"
     if [[ -n "${adb_ip_and_port}" ]]; then
       printf '%s\n' "${adb_ip_and_port}"
       return 0
     fi
 
-    adb_port="$(grep -oE '"adb_host_port"[[:space:]]*:[[:space:]]*[0-9]+' "${config_path}" | head -n1 | grep -oE '[0-9]+$' || true)"
+    adb_port="$(grep -oE '"adb_host_port"[[:space:]]*:[[:space:]]*[0-9]+' "${CVD_CONFIG_PATH}" | head -n1 | grep -oE '[0-9]+$' || true)"
     if [[ -n "${adb_port}" ]]; then
       printf '0.0.0.0:%s\n' "${adb_port}"
       return 0
@@ -540,16 +443,19 @@ make_deadline() {
   fi
 }
 
-wait_for_adb_device_forever() {
+wait_for_adb_device_while_running() {
   local adb_serial="$1"
 
-  while true; do
+  while has_live_cvd_processes; do
     adb connect "${adb_serial}" >/dev/null 2>&1 || true
     if [[ "$(adb -s "${adb_serial}" get-state 2>/dev/null || true)" == "device" ]]; then
       return 0
     fi
     sleep 1
   done
+
+  log "guest ADB never became ready before Cuttlefish exited."
+  return 1
 }
 
 wifi_connected_to_target() {
@@ -578,7 +484,9 @@ maybe_configure_virtual_wifi() {
     return 1
   fi
 
-  wait_for_adb_device_forever "${adb_serial}"
+  if ! wait_for_adb_device_while_running "${adb_serial}"; then
+    return 1
+  fi
 
   if wifi_connected_to_target "${adb_serial}"; then
     log "virtual Wi-Fi already connected to ${CVD_WIFI_AUTO_SSID}."
@@ -603,19 +511,35 @@ maybe_configure_virtual_wifi() {
       "${CVD_WIFI_AUTO_SECURITY}" >/dev/null 2>&1 || true
   fi
 
-  while true; do
+  while has_live_cvd_processes; do
     if wifi_connected_to_target "${adb_serial}"; then
       log "virtual Wi-Fi connected to ${CVD_WIFI_AUTO_SSID}."
       return 0
     fi
     sleep 1
   done
+
+  log "virtual Wi-Fi setup stopped because Cuttlefish exited before connection completed."
+  return 1
+}
+
+schedule_virtual_wifi_configuration() {
+  local adb_serial="$1"
+  local wifi_enabled="$2"
+
+  (
+    maybe_configure_virtual_wifi "${adb_serial}" "${wifi_enabled}" || true
+  ) &
+
+  disown || true
+  log "scheduled guest Wi-Fi auto-connect in the background"
 }
 
 wait_for_boot() {
   local launcher_log="$1"
   local deadline="$2"
   local min_mtime="${3:-0}"
+  local min_offset="${4:-0}"
   local crosvm_command_reported="false"
 
   while within_deadline "${deadline}"; do
@@ -627,7 +551,8 @@ wait_for_boot() {
           crosvm_command_reported="true"
         fi
       fi
-      if [[ "${log_mtime}" -ge "${min_mtime}" ]] && grep -Fq "${CVD_BOOT_MESSAGE}" "${launcher_log}"; then
+      if [[ "${log_mtime}" -ge "${min_mtime}" ]] &&
+         launcher_log_contains_message_since_offset "${launcher_log}" "${CVD_BOOT_MESSAGE}" "${min_offset}"; then
         return 0
       fi
     fi
@@ -661,32 +586,13 @@ launcher_log_contains_message_since_offset() {
   tail -c "+$((effective_offset + 1))" "${launcher_log}" 2>/dev/null | grep -Fq "${message}"
 }
 
-wait_for_launcher_message() {
-  local launcher_log="$1"
-  local deadline="$2"
-  local message="$3"
-  local min_offset="${4:-0}"
-
-  while within_deadline "${deadline}"; do
-    if launcher_log_contains_message_since_offset "${launcher_log}" "${message}" "${min_offset}"; then
-      return 0
-    fi
-    if ! has_live_cvd_processes; then
-      return 1
-    fi
-    sleep 0.5
-  done
-
-  return 1
-}
-
 start_scrcpy_with_retries() {
   local adb_serial="$1"
   local fullscreen_mode="${2:-false}"
-  local retry_deadline="$3"
   local attempt=1
+  local max_attempts=5
 
-  while within_deadline "${retry_deadline}"; do
+  while [[ "${attempt}" -le "${max_attempts}" ]]; do
     if pgrep -x scrcpy >/dev/null 2>&1; then
       return 0
     fi
@@ -706,10 +612,12 @@ start_scrcpy_with_retries() {
 
     log "scrcpy exited quickly; retrying."
     attempt=$((attempt + 1))
-    sleep 0.5
+    if [[ "${attempt}" -le "${max_attempts}" ]]; then
+      sleep 0.5
+    fi
   done
 
-  log "unable to keep scrcpy running before timeout."
+  log "unable to keep scrcpy running after ${max_attempts} attempts."
   return 1
 }
 
@@ -718,34 +626,34 @@ schedule_scrcpy_when_launcher_ready() {
   local launcher_log="$2"
   local fullscreen_mode="${3:-false}"
   local min_log_offset="${4:-0}"
-  local watch_deadline
-  local retry_deadline
-
-  watch_deadline="$(make_deadline "${CVD_START_SCRCPY_TIMEOUT_SEC}")"
 
   (
-    if ! wait_for_launcher_message "${launcher_log}" "${watch_deadline}" "${CVD_SCRCPY_READY_MESSAGE}" "${min_log_offset}"; then
-      log "deferred scrcpy watcher timed out after ${CVD_START_SCRCPY_TIMEOUT_SEC}s waiting for ${CVD_SCRCPY_READY_MESSAGE}."
+    while has_live_cvd_processes; do
+      if launcher_log_contains_message_since_offset "${launcher_log}" "${CVD_BOOT_MESSAGE}" "${min_log_offset}"; then
+        break
+      fi
+      sleep 0.5
+    done
+
+    if ! has_live_cvd_processes; then
+      log "deferred scrcpy watcher stopped because Cuttlefish exited before ${CVD_BOOT_MESSAGE}."
       exit 0
     fi
     if pgrep -x scrcpy >/dev/null 2>&1; then
       exit 0
     fi
-    retry_deadline="$(make_deadline "${CVD_START_SCRCPY_TIMEOUT_SEC}")"
-    start_scrcpy_with_retries "${adb_serial}" "${fullscreen_mode}" "${retry_deadline}" || true
+    start_scrcpy_with_retries "${adb_serial}" "${fullscreen_mode}" || true
   ) &
 
   disown || true
-  log "scheduled scrcpy launch when launcher logs ${CVD_SCRCPY_READY_MESSAGE}"
+  log "scheduled scrcpy launch when launcher logs ${CVD_BOOT_MESSAGE}"
 }
 
 maybe_start_scrcpy() {
   local adb_serial="$1"
   local launcher_log="$2"
-  local deadline="$3"
-  local fullscreen_mode="${4:-false}"
-  local min_log_offset="${5:-0}"
-  local retry_deadline
+  local fullscreen_mode="${3:-false}"
+  local min_log_offset="${4:-0}"
 
   if ! command -v scrcpy >/dev/null 2>&1; then
     log "scrcpy not found; skipping client launch."
@@ -757,35 +665,15 @@ maybe_start_scrcpy() {
     return 0
   fi
 
-  if launcher_log_contains_message_since_offset "${launcher_log}" "${CVD_SCRCPY_READY_MESSAGE}" "${min_log_offset}"; then
-    log "launcher already contains ${CVD_SCRCPY_READY_MESSAGE}; starting scrcpy immediately."
-    retry_deadline="$(make_deadline "${CVD_START_SCRCPY_TIMEOUT_SEC}")"
-    start_scrcpy_with_retries "${adb_serial}" "${fullscreen_mode}" "${retry_deadline}" || true
+  if launcher_log_contains_message_since_offset "${launcher_log}" "${CVD_BOOT_MESSAGE}" "${min_log_offset}"; then
+    log "launcher already contains ${CVD_BOOT_MESSAGE}; starting scrcpy immediately."
+    start_scrcpy_with_retries "${adb_serial}" "${fullscreen_mode}" || true
     return 0
   fi
 
-  if ! wait_for_launcher_message "${launcher_log}" "${deadline}" "${CVD_SCRCPY_READY_MESSAGE}" "${min_log_offset}"; then
-    log "launcher did not log ${CVD_SCRCPY_READY_MESSAGE} before timeout; deferring scrcpy launch."
-    schedule_scrcpy_when_launcher_ready "${adb_serial}" "${launcher_log}" "${fullscreen_mode}" "${min_log_offset}"
-    return 0
-  fi
-
-  start_scrcpy_with_retries "${adb_serial}" "${fullscreen_mode}" "${deadline}" || true
+  log "launcher has not yet logged ${CVD_BOOT_MESSAGE}; deferring scrcpy launch."
+  schedule_scrcpy_when_launcher_ready "${adb_serial}" "${launcher_log}" "${fullscreen_mode}" "${min_log_offset}"
   return 0
-}
-
-report_scrcpy_timing() {
-  local invocation_epoch="$1"
-  local now_epoch elapsed
-
-  now_epoch="$(date +%s)"
-  elapsed="$((now_epoch - invocation_epoch))"
-
-  if pgrep -x scrcpy >/dev/null 2>&1; then
-    respond "scrcpy running after ${elapsed}s"
-  else
-    respond "scrcpy not running after ${elapsed}s"
-  fi
 }
 
 start_cvd() {
@@ -796,25 +684,19 @@ start_cvd() {
   local adb_serial
   local boot_deadline
   local wifi_enabled
-  local scrcpy_deadline
   local start_epoch
-  local invocation_epoch
   local launcher_log_offset="0"
 
   require_executable "${CVD_BIN}" "cvd launcher"
   check_required_groups
-  launcher_log="$(resolve_launcher_log)"
+  launcher_log="${CVD_LAUNCHER_LOG}"
   adb_serial="$(resolve_adb_serial)"
   start_epoch="$(date +%s)"
-  invocation_epoch="${start_epoch}"
-
-  scrcpy_deadline="$(make_deadline "${CVD_START_SCRCPY_TIMEOUT_SEC}")"
 
   if has_live_cvd_processes; then
     log "Cuttlefish is already running under ${CVD_HOME_DIR}"
     respond "Android virtual device running"
-    maybe_start_scrcpy "${adb_serial}" "${launcher_log}" "${scrcpy_deadline}" "${fullscreen_mode}" "0" || true
-    report_scrcpy_timing "${invocation_epoch}"
+    maybe_start_scrcpy "${adb_serial}" "${launcher_log}" "${fullscreen_mode}" "0" || true
     return 0
   fi
 
@@ -823,14 +705,17 @@ start_cvd() {
   fi
 
 
-  # Apply default arguments from configuration maps
-  # Only add parameters meant to be passed to cvd_internal_start
-  apply_default_args CVD_COMPUTE_DEFAULTS args "$@"
-  apply_default_args CVD_GPU_DEFAULTS args "$@"
-  apply_default_args CVD_NETWORK_DEFAULTS args "$@"
-  apply_default_args CVD_DISPLAY_DEFAULTS args "$@"
-  apply_default_args CVD_REPORT_DEFAULTS args "$@"
-  apply_default_args CVD_OVERLAY_DEFAULTS args "$@"
+  # Apply default arguments from configuration maps.
+  local config_map
+  for config_map in \
+    CVD_COMPUTE_DEFAULTS \
+    CVD_GPU_DEFAULTS \
+    CVD_NETWORK_DEFAULTS \
+    CVD_DISPLAY_DEFAULTS \
+    CVD_REPORT_DEFAULTS \
+    CVD_OVERLAY_DEFAULTS; do
+    apply_default_args "${config_map}" args "$@"
+  done
 
   args+=("$@")
 
@@ -859,7 +744,7 @@ start_cvd() {
   log "launcher pid: $!"
 
   boot_deadline="$(make_deadline "${CVD_BOOT_TIMEOUT_SEC}")"
-  if ! wait_for_boot "${launcher_log}" "${boot_deadline}" "${start_epoch}"; then
+  if ! wait_for_boot "${launcher_log}" "${boot_deadline}" "${start_epoch}" "${launcher_log_offset}"; then
     if [[ -f "${launcher_log}" ]]; then
       tail -n 80 "${launcher_log}" >&2 || true
     fi
@@ -868,17 +753,13 @@ start_cvd() {
 
   log "boot completed after seeing: ${CVD_BOOT_MESSAGE}"
   respond "Android virtual device running"
-  scrcpy_deadline="$(make_deadline "${CVD_START_SCRCPY_TIMEOUT_SEC}")"
-  maybe_start_scrcpy "${adb_serial}" "${launcher_log}" "${scrcpy_deadline}" "${fullscreen_mode}" "${launcher_log_offset}" || true
-  report_scrcpy_timing "${invocation_epoch}"
-  maybe_configure_virtual_wifi "${adb_serial}" "${wifi_enabled}" || true
+  maybe_start_scrcpy "${adb_serial}" "${launcher_log}" "${fullscreen_mode}" "${launcher_log_offset}" || true
+  schedule_virtual_wifi_configuration "${adb_serial}" "${wifi_enabled}"
 }
 
 stop_cvd_internal() {
   local clear_instance_dirs="${1:-false}"
   shift || true
-  local stop_bin
-  local config_path
   local stop_ok="false"
   local -a stop_args=()
 
@@ -887,25 +768,22 @@ stop_cvd_internal() {
   fi
   stop_args+=("$@")
 
-  stop_bin="$(resolve_stop_bin)"
-  config_path="$(resolve_config_json)"
-
-  require_executable "${stop_bin}" "cvd stop helper"
+  require_executable "${CVD_STOP_BIN}" "cvd stop helper"
 
   if [[ "${clear_instance_dirs}" == "true" ]]; then
-    log "stopping Cuttlefish and clearing instance dirs with $(basename "${stop_bin}")"
+    log "stopping Cuttlefish and clearing instance dirs with $(basename "${CVD_STOP_BIN}")"
   else
-    log "stopping Cuttlefish with $(basename "${stop_bin}")"
+    log "stopping Cuttlefish with $(basename "${CVD_STOP_BIN}")"
   fi
 
-  if [[ -f "${config_path}" ]]; then
-    if run_with_cvd_env_and_config "${config_path}" "${stop_bin}" "${stop_args[@]}"; then
+  if [[ -f "${CVD_CONFIG_PATH}" ]]; then
+    if run_with_cvd_env --config "${CVD_CONFIG_PATH}" "${CVD_STOP_BIN}" "${stop_args[@]}"; then
       stop_ok="true"
     else
       log "primary stop helper returned non-zero"
     fi
   else
-    if run_with_cvd_env "${stop_bin}" "${stop_args[@]}"; then
+    if run_with_cvd_env "${CVD_STOP_BIN}" "${stop_args[@]}"; then
       stop_ok="true"
     else
       log "primary stop helper returned non-zero"
@@ -932,73 +810,44 @@ stop_cvd_internal() {
     log "stop helper reported no active device; no live Cuttlefish processes remain"
   fi
 
-  respond "Android virtual device stopped"
+  respond "Android virtual device stopped."
 }
-
-stop_cvd() {
-  stop_cvd_internal false "$@"
-}
-
-reset_cvd() {
-  stop_cvd_internal true "$@"
-}
-
-restart_cvd() {
-  stop_cvd
-  sleep 0.5
-  start_cvd false "$@"
-}
-
-status_cvd() {
-  local message
-  if has_live_cvd_processes; then
-    message="Android running."
-  else
-    message="Android not running."
-  fi
-
-  respond "${message}"
-  printf '%s\n' "${message}" >&3
-}
-
 main() {
   local command="${1:-help}"
 
   case "${command}" in
     start)
+      CONSOLE_FAILURE_MESSAGE="Startup Failed."
       redirect_start_logs
       shift
       run_timed_operation "started" start_cvd false "$@"
       ;;
     stop)
       shift
-      stop_dnsmasq
-      env \
-        HOME=/usr/share/cuttlefish-common/aosp \
-        ANDROID_HOST_OUT=/usr/lib/cuttlefish-common \
-        ANDROID_SOONG_HOST_OUT=/usr/lib/cuttlefish-common \
-        ANDROID_PRODUCT_OUT=/usr/share/cuttlefish-common/aosp \
-        /usr/lib/cuttlefish-common/bin/stop_cvd "$@" >&3 2>&3
+      stop_cvd_internal false "$@"
       ;;
     reset)
       shift
-      reset_cvd "$@"
+      stop_cvd_internal true "$@"
       ;;
     restart)
       shift
-      run_timed_operation "restarted" restart_cvd "$@"
+      stop_cvd_internal false
+      sleep 0.5
+      exec "$0" start "$@"
       ;;
     status)
-      shift
-      status_cvd "$@"
+      if has_live_cvd_processes; then
+        respond "Android virtual device running."
+      else
+        respond "Android virtual device not running."
+      fi
       ;;
     help|-h|--help)
       usage
-      usage 3
       ;;
     *)
       usage
-      usage 3
       exit 1
       ;;
   esac

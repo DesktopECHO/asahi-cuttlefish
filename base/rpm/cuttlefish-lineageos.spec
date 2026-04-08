@@ -1,7 +1,7 @@
-Name:           cuttlefish-aosp
+Name:           cuttlefish-lineageos
 Version:        20260401
 Release:        1%{?dist}
-Summary:        AOSP tree for Cuttlefish host workflows
+Summary:        LineageOS for Cuttlefish host
 License:        Apache-2.0
 URL:            https://github.com/google/android-cuttlefish
 Source0:        android-cuttlefish-1.50.0.tar.gz
@@ -15,8 +15,8 @@ Requires:       cuttlefish-base
 Requires(post): /usr/sbin/setcap
 
 %description
-Contains the AOSP tree used by this Cuttlefish workflow, installed under
-/usr/share/cuttlefish-common/aosp.
+Contains LineageOS 23 for use by this Cuttlefish workflow, installed under
+/usr/share/cuttlefish-common/lineageos.
 
 %prep
 %autosetup -n android-cuttlefish-1.50.0
@@ -77,11 +77,11 @@ case "%{_arch}" in
 esac
 
 mkdir -p %{buildroot}/usr/share/cuttlefish-common
-cp -a aosp %{buildroot}/usr/share/cuttlefish-common/
+cp -a lineageos %{buildroot}/usr/share/cuttlefish-common/
 pushd base/cvd/bazel-out/${bazel_arch}-opt/bin/cuttlefish/package/cuttlefish-common
 while IFS= read -r overlay_path; do
   while IFS= read -r -d '' entry; do
-    dest="%{buildroot}/usr/share/cuttlefish-common/aosp/${entry#./}"
+    dest="%{buildroot}/usr/share/cuttlefish-common/lineageos/${entry#./}"
     if [ -d "${entry}" ]; then
       install -d "${dest}"
     else
@@ -95,19 +95,19 @@ lib64
 usr/share/webrtc
 EOF
 popd
-install -Dpm0755 base/rpm/avbtool-wrapper.sh %{buildroot}/usr/share/cuttlefish-common/aosp/bin/avbtool
-install -Dpm0644 base/rpm/vendor/avbtool.py %{buildroot}/usr/share/cuttlefish-common/aosp/bin/avbtool.py
-find %{buildroot}/usr/share/cuttlefish-common/aosp ! -type l -exec chmod u+w '{}' +
-find %{buildroot}/usr/share/cuttlefish-common/aosp ! -type l -exec chmod g=u '{}' +
+install -Dpm0755 base/rpm/avbtool-wrapper.sh %{buildroot}/usr/share/cuttlefish-common/lineageos/bin/avbtool
+install -Dpm0644 base/rpm/vendor/avbtool.py %{buildroot}/usr/share/cuttlefish-common/lineageos/bin/avbtool.py
+find %{buildroot}/usr/share/cuttlefish-common/lineageos ! -type l -exec chmod u+w '{}' +
+find %{buildroot}/usr/share/cuttlefish-common/lineageos ! -type l -exec chmod g=u '{}' +
 
 %files
 %license LICENSE
 %defattr(-,root,kvm,-)
-/usr/share/cuttlefish-common/aosp
+/usr/share/cuttlefish-common/lineageos
 
 %post
-setcap cap_net_admin,cap_net_bind_service,cap_net_raw=+ep /usr/share/cuttlefish-common/aosp/bin/cvdalloc >/dev/null 2>&1 || :
+setcap cap_net_admin,cap_net_bind_service,cap_net_raw=+ep /usr/share/cuttlefish-common/lineageos/bin/cvdalloc >/dev/null 2>&1 || :
 
 %changelog
 * Tue Mar 31 2026 Daniel Milisic <dmilisic@desktopecho.com> - 20260401-1
-- Package the AOSP tree as a standalone RPM
+- Package LineageOS as standalone RPM

@@ -3,3 +3,4 @@
 /out
 *.lock
 .*/settings.json
+/lineageos
