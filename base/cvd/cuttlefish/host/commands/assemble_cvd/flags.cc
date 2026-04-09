@@ -476,10 +476,8 @@ Result<CuttlefishConfig> InitializeCuttlefishConfiguration(
     tmp_config_obj.netsim_radio_enable(CuttlefishConfig::NetsimRadio::Uwb);
   }
 
-  bool any_not_netsim_bt = false;
   bool any_not_netsim_uwb = false;
   for (int32_t i = 0; i < instances_size; ++i) {
-    any_not_netsim_bt |= !netsim_all_radios_vec[i] && !netsim_bt_vec[i];
     any_not_netsim_uwb |= !netsim_all_radios_vec[i] && !netsim_uwb_vec[i];
   }
 
@@ -672,7 +670,6 @@ Result<CuttlefishConfig> InitializeCuttlefishConfiguration(
   tmp_config_obj.set_rootcanal_test_port(7500 + rootcanal_instance_num);
   tmp_config_obj.set_rootcanal_link_ble_port(7600 + rootcanal_instance_num);
   VLOG(0) << "rootcanal_instance_num: " << rootcanal_instance_num;
-  VLOG(0) << "launch rootcanal: " << (FLAGS_rootcanal_instance_num <= 0);
 
   tmp_config_obj.set_casimir_args(FLAGS_casimir_args);
   auto casimir_instance_num = *instance_nums.begin() - 1;
@@ -1242,8 +1239,11 @@ Result<CuttlefishConfig> InitializeCuttlefishConfiguration(
     tmp_config_obj.set_sig_server_proxy_port(port);
     instance.set_start_netsim(is_first_instance && is_any_netsim);
 
-    instance.set_start_rootcanal(is_first_instance && any_not_netsim_bt &&
-                                 (FLAGS_rootcanal_instance_num <= 0));
+    bool start_rootcanal =
+        is_first_instance && enable_host_bluetooth && !is_bt_netsim &&
+        (FLAGS_rootcanal_instance_num <= 0);
+    instance.set_start_rootcanal(start_rootcanal);
+    VLOG(0) << "launch rootcanal: " << start_rootcanal;
 
     instance.set_start_casimir(is_first_instance &&
                                FLAGS_casimir_instance_num <= 0);

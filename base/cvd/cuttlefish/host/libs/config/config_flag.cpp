@@ -64,6 +64,27 @@ std::string VectorizedFlagValue(const std::vector<std::string>& value) {
   return absl::StrJoin(value, ",");
 }
 
+std::string ConfigValueToFlagValue(const Json::Value& value) {
+  if (value.isString()) {
+    return value.asString();
+  }
+  if (value.isBool()) {
+    return value.asBool() ? "true" : "false";
+  }
+  if (value.isInt64()) {
+    return fmt::format("{}", value.asInt64());
+  }
+  if (value.isUInt64()) {
+    return fmt::format("{}", value.asUInt64());
+  }
+  if (value.isDouble()) {
+    return fmt::format("{}", value.asDouble());
+  }
+
+  Json::StreamWriterBuilder factory;
+  return Json::writeString(factory, value);
+}
+
 class ConfigReader : public FlagFeature {
  public:
   INJECT(ConfigReader()) = default;
@@ -150,13 +171,7 @@ class ConfigFlagImpl : public ConfigFlag {
       Json::Value config_values =
           CF_EXPECT(config_reader_.ReadConfig(configs_[i]));
       for (const std::string& flag : config_values.getMemberNames()) {
-        std::string value;
-        if (flag == "custom_actions") {
-          Json::StreamWriterBuilder factory;
-          value = Json::writeString(factory, config_values[flag]);
-        } else {
-          value = config_values[flag].asString();
-        }
+        std::string value = ConfigValueToFlagValue(config_values[flag]);
         flags[flag].push_back(value);
       }
     }

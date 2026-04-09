@@ -160,29 +160,49 @@ std::string StopCvdBinary() { return HostBinaryPath("stop_cvd"); }
 std::string TcpConnectorBinary() { return HostBinaryPath("tcp_connector"); }
 
 std::string TestKeyRsa2048() {
-  return DefaultHostArtifactsPath("etc/cvd_avb_testkey_rsa2048.pem");
+  const std::string host_path =
+      DefaultHostArtifactsPath("etc/cvd_avb_testkey_rsa2048.pem");
+  if (FileExists(host_path)) {
+    return host_path;
+  }
+  return DefaultGuestImagePath("/etc/cvd_avb_testkey_rsa2048.pem");
 }
 
 std::string TestKeyRsa4096() {
-  const std::string rsa_4096 = DefaultHostArtifactsPath("etc/cvd_avb_testkey_rsa4096.pem");
-  if (FileExists(rsa_4096)) {
-    return rsa_4096;
-  } else {
-    return DefaultHostArtifactsPath("etc/cvd_avb_testkey.pem");
+  const std::string host_rsa_4096 =
+      DefaultHostArtifactsPath("etc/cvd_avb_testkey_rsa4096.pem");
+  if (FileExists(host_rsa_4096)) {
+    return host_rsa_4096;
   }
+  const std::string product_rsa_4096 =
+      DefaultGuestImagePath("/etc/cvd_avb_testkey_rsa4096.pem");
+  if (FileExists(product_rsa_4096)) {
+    return product_rsa_4096;
+  }
+  return DefaultHostArtifactsPath("etc/cvd_avb_testkey.pem");
 }
 
 std::string TestPubKeyRsa2048() {
-  return DefaultHostArtifactsPath("etc/cvd_rsa2048.avbpubkey");
+  const std::string host_path =
+      DefaultHostArtifactsPath("etc/cvd_rsa2048.avbpubkey");
+  if (FileExists(host_path)) {
+    return host_path;
+  }
+  return DefaultGuestImagePath("/etc/cvd_rsa2048.avbpubkey");
 }
 
 std::string TestPubKeyRsa4096() {
-  const std::string rsa_4096 = DefaultHostArtifactsPath("etc/cvd_rsa4096.avbpubkey");
-  if (FileExists(rsa_4096)) {
-    return rsa_4096;
-  } else {
-    return DefaultHostArtifactsPath("etc/cvd.avbpubkey");
+  const std::string host_rsa_4096 =
+      DefaultHostArtifactsPath("etc/cvd_rsa4096.avbpubkey");
+  if (FileExists(host_rsa_4096)) {
+    return host_rsa_4096;
   }
+  const std::string product_rsa_4096 =
+      DefaultGuestImagePath("/etc/cvd_rsa4096.avbpubkey");
+  if (FileExists(product_rsa_4096)) {
+    return product_rsa_4096;
+  }
+  return DefaultHostArtifactsPath("etc/cvd.avbpubkey");
 }
 
 std::string TombstoneReceiverBinary() {
@@ -222,4 +242,3 @@ std::string VhostUserInputBinary() {
 }
 
 }  // namespace cuttlefish
-

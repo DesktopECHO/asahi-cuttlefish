@@ -4,14 +4,83 @@ set -euo pipefail
 
 exec 3>&1
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+PACKAGED_CVD_HOST_OUT="/usr/lib/cuttlefish-common"
+DEFAULT_CVD_PRODUCT_OUT="/usr/share/cuttlefish-common/lineageos"
+LOCAL_CVD_BUILD_ROOT="${REPO_ROOT}/base/cvd/bazel-bin/cuttlefish"
+LOCAL_ASSEMBLE_CVD_BIN="${LOCAL_CVD_BUILD_ROOT}/host/commands/assemble_cvd/assemble_cvd"
+LOCAL_CVD_START_BIN="${LOCAL_CVD_BUILD_ROOT}/host/commands/start/cvd_internal_start"
+LOCAL_RUN_CVD_BIN="${LOCAL_CVD_BUILD_ROOT}/host/commands/run_cvd/run_cvd"
+LOCAL_CVD_HOST_OUT="${REPO_ROOT}/.cache/cuttlefish-host-out"
+
+link_tree_contents() {
+  local source_dir="$1"
+  local dest_dir="$2"
+  local entry
+  local rel_path
+  local dest_path
+
+  [[ -d "${source_dir}" ]] || return 0
+
+  while IFS= read -r -d '' entry; do
+    rel_path="${entry#${source_dir}/}"
+    dest_path="${dest_dir}/${rel_path}"
+    if [[ -d "${entry}" ]]; then
+      mkdir -p "${dest_path}"
+    else
+      mkdir -p "$(dirname "${dest_path}")"
+      ln -sfn "${entry}" "${dest_path}"
+    fi
+  done < <(find "${source_dir}" -mindepth 1 -print0)
+}
+
+prepare_local_host_out() {
+  local entry
+  local product_out="${CVD_PRODUCT_OUT:-${DEFAULT_CVD_PRODUCT_OUT}}"
+
+  mkdir -p "${LOCAL_CVD_HOST_OUT}/bin"
+  rm -rf "${LOCAL_CVD_HOST_OUT}/etc"
+  mkdir -p "${LOCAL_CVD_HOST_OUT}/etc"
+  link_tree_contents "${PACKAGED_CVD_HOST_OUT}/etc" "${LOCAL_CVD_HOST_OUT}/etc"
+  link_tree_contents "${product_out}/etc" "${LOCAL_CVD_HOST_OUT}/etc"
+  ln -sfn "${PACKAGED_CVD_HOST_OUT}/lib64" "${LOCAL_CVD_HOST_OUT}/lib64"
+  ln -sfn "${PACKAGED_CVD_HOST_OUT}/usr" "${LOCAL_CVD_HOST_OUT}/usr"
+
+  for entry in "${PACKAGED_CVD_HOST_OUT}/bin/"*; do
+    ln -sfn "${entry}" "${LOCAL_CVD_HOST_OUT}/bin/$(basename "${entry}")"
+  done
+
+  ln -sfn "${LOCAL_ASSEMBLE_CVD_BIN}" "${LOCAL_CVD_HOST_OUT}/bin/assemble_cvd"
+  ln -sfn "${LOCAL_CVD_START_BIN}" "${LOCAL_CVD_HOST_OUT}/bin/cvd_internal_start"
+  if [[ -x "${LOCAL_RUN_CVD_BIN}" ]]; then
+    ln -sfn "${LOCAL_RUN_CVD_BIN}" "${LOCAL_CVD_HOST_OUT}/bin/run_cvd"
+  fi
+}
+
+resolve_cvd_host_out() {
+  if [[ -n "${CVD_HOST_OUT:-}" ]]; then
+    printf '%s\n' "${CVD_HOST_OUT}"
+    return
+  fi
+
+  if [[ -x "${LOCAL_ASSEMBLE_CVD_BIN}" && -x "${LOCAL_CVD_START_BIN}" ]]; then
+    prepare_local_host_out
+    printf '%s\n' "${LOCAL_CVD_HOST_OUT}"
+    return
+  fi
+
+  printf '%s\n' "${PACKAGED_CVD_HOST_OUT}"
+}
+
 mkdir -p $HOME/.config/cuttlefish
 START_LOG_FILE="/tmp/acfstart.log"
 
 # ============================================================================
 # Environment Paths
 # ============================================================================
-CVD_HOST_OUT="/usr/lib/cuttlefish-common"
-CVD_PRODUCT_OUT="/usr/share/cuttlefish-common/lineageos"
+CVD_HOST_OUT="$(resolve_cvd_host_out)"
+: "${CVD_PRODUCT_OUT:=${DEFAULT_CVD_PRODUCT_OUT}}"
 : "${CVD_HOME_DIR:=${HOME}/.config/cuttlefish}"
 CVD_BIN="${CVD_HOST_OUT}/bin/cvd_internal_start"
 CVD_CLI_BIN="${CVD_HOST_OUT}/bin/cvd"
@@ -47,6 +116,7 @@ declare -A CVD_NETWORK_DEFAULTS=(
   [enable_wifi]="true"
   [enable_modem_simulator]="false"
   [enable_host_uwb]="false"
+  [netsim_bt]="true"
   [netsim_uwb]="false"
 )
 
@@ -103,6 +173,7 @@ CVD_VHOST_USER_VSOCK="${CVD_NETWORK_DEFAULTS[vhost_user_vsock]}"
 CVD_ENABLE_WIFI="${CVD_NETWORK_DEFAULTS[enable_wifi]}"
 CVD_ENABLE_MODEM_SIMULATOR="${CVD_NETWORK_DEFAULTS[enable_modem_simulator]}"
 CVD_ENABLE_HOST_UWB="${CVD_NETWORK_DEFAULTS[enable_host_uwb]}"
+CVD_NETSIM_BT="${CVD_NETWORK_DEFAULTS[netsim_bt]}"
 CVD_NETSIM_UWB="${CVD_NETWORK_DEFAULTS[netsim_uwb]}"
 CVD_X_RES="${CVD_DISPLAY_DEFAULTS[x_res]}"
 CVD_Y_RES="${CVD_DISPLAY_DEFAULTS[y_res]}"
@@ -451,7 +522,7 @@ wait_for_adb_device_while_running() {
     if [[ "$(adb -s "${adb_serial}" get-state 2>/dev/null || true)" == "device" ]]; then
       return 0
     fi
-    sleep 1
+    sleep 1.5
   done
 
   log "guest ADB never became ready before Cuttlefish exited."
@@ -516,7 +587,7 @@ maybe_configure_virtual_wifi() {
       log "virtual Wi-Fi connected to ${CVD_WIFI_AUTO_SSID}."
       return 0
     fi
-    sleep 1
+    sleep 1.5
   done
 
   log "virtual Wi-Fi setup stopped because Cuttlefish exited before connection completed."
@@ -605,7 +676,7 @@ start_scrcpy_with_retries() {
     fi
     disown || true
 
-    sleep 1
+    sleep 1.5
     if pgrep -x scrcpy >/dev/null 2>&1; then
       return 0
     fi
@@ -613,7 +684,7 @@ start_scrcpy_with_retries() {
     log "scrcpy exited quickly; retrying."
     attempt=$((attempt + 1))
     if [[ "${attempt}" -le "${max_attempts}" ]]; then
-      sleep 0.5
+      sleep 1
     fi
   done
 
@@ -728,7 +799,8 @@ start_cvd() {
 
   wifi_enabled="$(flag_value "enable_wifi" "${CVD_ENABLE_WIFI}" "${args[@]}")"
 
-  log "starting Cuttlefish"
+  log "starting Cuttlefish with $(basename "${CVD_BIN}")"
+  printf '[%s] starting Cuttlefish with %s\n' "${SCRIPT_NAME}" "$(basename "${CVD_BIN}")" >&3
   log "HOME=${CVD_HOME_DIR}"
   log "ANDROID_HOST_OUT=${CVD_HOST_OUT}"
   log "ANDROID_PRODUCT_OUT=${CVD_PRODUCT_OUT}"
