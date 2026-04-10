@@ -52,6 +52,17 @@ function install_rpm_build_dependencies() {
     golang \
     npm
 
+  # cuttlefish-scrcpy BuildRequires (Meson C build)
+  sudo dnf -y install \
+    meson \
+    ninja-build \
+    SDL3-devel \
+    libavcodec-free-devel \
+    libavformat-free-devel \
+    libavutil-free-devel \
+    libswresample-free-devel \
+    libusb1-devel
+
   # Runtime tools needed during rpmbuild
   sudo dnf -y install \
     rsync

@@ -34,14 +34,38 @@ find %{buildroot}/usr/share/cuttlefish-common/lineageos ! -type l -exec chmod g=
 /usr/share/cuttlefish-common/lineageos
 
 %post
+manifest=%{_localstatedir}/lib/cuttlefish-lineageos/created-symlinks
+mkdir -p "$(dirname "$manifest")"
+if [ "$1" -eq 1 ]; then
+  : > "$manifest"
+else
+  touch "$manifest"
+fi
+
 cd /usr/share/cuttlefish-common/lineageos || exit 0
 find etc usr -mindepth 1 | while read -r path; do
   target="/usr/lib/cuttlefish-common/${path}"
+  source="/usr/share/cuttlefish-common/lineageos/${path}"
   if [ ! -e "${target}" ]; then
     mkdir -p "$(dirname "${target}")"
-    ln -s "/usr/share/cuttlefish-common/lineageos/${path}" "${target}"
+    ln -s "${source}" "${target}"
+    grep -Fxq "${target}" "$manifest" || printf '%s\n' "${target}" >> "$manifest"
   fi
 done
+
+%postun
+if [ "$1" -eq 0 ]; then
+  manifest=%{_localstatedir}/lib/cuttlefish-lineageos/created-symlinks
+  if [ -f "$manifest" ]; then
+    tac "$manifest" | while read -r target; do
+      expected="/usr/share/cuttlefish-common/lineageos/${target#/usr/lib/cuttlefish-common/}"
+      if [ -L "$target" ] && [ "$(readlink "$target")" = "$expected" ]; then
+        rm -f "$target"
+      fi
+    done
+    rm -f "$manifest"
+  fi
+fi
 
 %changelog
 * Tue Mar 31 2026 Daniel Milisic <dmilisic@desktopecho.com> - 20260401-1

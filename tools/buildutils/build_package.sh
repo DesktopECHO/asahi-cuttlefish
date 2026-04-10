@@ -130,6 +130,36 @@ function refresh_source_tarball_if_needed() {
   tmp_manifest="$(mktemp "${RPMBUILD_TOPDIR}/SOURCES/${TAR_BASENAME}.manifest.XXXXXX")"
   trap 'rm -f "${tmp_manifest}"' RETURN
 
+  local scrcpy_server_dest="${REPO_DIR}/scrcpy/scrcpy-server"
+  local scrcpy_server_build_helper="${REPO_DIR}/tools/build_scrcpy_server_aarch64.sh"
+  local local_scrcpy_server="${REPO_DIR}/out/build-scrcpy-server/scrcpy-server"
+
+  # On aarch64, prefer a locally built scrcpy-server since the upstream prebuilt
+  # causes protocol issues with the SDL3 client on Asahi. Fall back to the
+  # upstream release artifact if the local toolchain is not available.
+  if [[ "$(uname -m)" == "aarch64" && -x "${scrcpy_server_build_helper}" ]]; then
+    echo "Building scrcpy-server locally for aarch64"
+    if BUILD_DIR="${REPO_DIR}/out/build-scrcpy-server" "${scrcpy_server_build_helper}"; then
+      install -m 0644 "${local_scrcpy_server}" "${scrcpy_server_dest}"
+    else
+      echo "Local scrcpy-server build failed; falling back to the upstream prebuilt"
+    fi
+  fi
+
+  # Fetch scrcpy-server JAR if a local build did not provide one.
+  # Version is read from the meson.build project declaration so it stays in sync.
+  if [[ ! -f "${scrcpy_server_dest}" ]]; then
+    local scrcpy_version
+    scrcpy_version="$(grep -m1 "version:" "${REPO_DIR}/scrcpy/meson.build" \
+                      | grep -oP "'\K[0-9]+\.[0-9]+\.[0-9]+")" || true
+    if [[ -n "${scrcpy_version}" ]]; then
+      echo "Fetching scrcpy-server v${scrcpy_version}"
+      curl -fL --retry 3 \
+        -o "${scrcpy_server_dest}" \
+        "https://github.com/Genymobile/scrcpy/releases/download/v${scrcpy_version}/scrcpy-server-v${scrcpy_version}"
+    fi
+  fi
+
   build_source_manifest "${tmp_manifest}"
 
   if [[ -f "${SOURCE_TARBALL}" && -f "${SOURCE_MANIFEST}" ]] && cmp -s "${tmp_manifest}" "${SOURCE_MANIFEST}"; then

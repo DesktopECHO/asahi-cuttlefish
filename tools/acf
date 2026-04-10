@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/usr/bin/bash
 
 set -euo pipefail
 
@@ -125,8 +125,8 @@ declare -A CVD_NETWORK_DEFAULTS=(
 # ============================================================================
 declare -A CVD_DISPLAY_DEFAULTS=(
   [x_res]="1920"
-  [y_res]="1200"
-  [dpi]="192"
+  [y_res]="1080"
+  [dpi]="160"
 )
 
 # ============================================================================
@@ -159,6 +159,7 @@ declare -A CVD_BOOT_DEFAULTS=(
 # ============================================================================
 declare -A CVD_OVERLAY_DEFAULTS=(
   [use_overlay]="true"
+  [use_sdcard]="false"
 )
 
 # Convenience variables (for backward compatibility)
@@ -245,7 +246,7 @@ Usage:
 
 Example:
 
-  ${SCRIPT_NAME} start --cpus=4 --memory_mb=4096 --x_res=1920 --x_res=1200 --dpi=192 --gpu_mode=gfxstream
+  ${SCRIPT_NAME} start --cpus=4 --memory_mb=4096 --x_res=1920 --y_res=1080 --dpi=160 --gpu_mode=gfxstream
 
 EOF
 }
@@ -670,9 +671,9 @@ start_scrcpy_with_retries() {
 
     log "starting scrcpy for ${adb_serial} (attempt ${attempt})"
     if [[ "${fullscreen_mode}" == "true" ]]; then
-      scrcpy -s "${adb_serial}" --force-adb-forward --fullscreen >/dev/null 2>&1 &
+      /usr/lib/cuttlefish-common/bin/scrcpy --adaptive-primary-display=1920x1080/160 -s "${adb_serial}" --force-adb-forward --fullscreen >/dev/null 2>&1 &
     else
-      scrcpy -s "${adb_serial}" --force-adb-forward >/dev/null 2>&1 &
+      /usr/lib/cuttlefish-common/bin/scrcpy --adaptive-primary-display=1920x1080/160 -s "${adb_serial}" --force-adb-forward >/dev/null 2>&1 &
     fi
     disown || true
 

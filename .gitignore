@@ -5,3 +5,6 @@
 .*/settings.json
 /lineageos
 /.cache
+androguard.db-wal
+androguard.db-shm
+androguard.db
