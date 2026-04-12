@@ -84,14 +84,15 @@ struct sc_screen {
     bool vd_resize_pending;
     bool vd_resize_enabled;
     bool vd_initial_resize_sent;
-    struct sc_size vd_resize_size;
     struct sc_size vd_last_sent_size;
     struct sc_size vd_last_windowed_size;
     bool vd_last_sent_valid;
     bool vd_last_windowed_size_valid;
+    bool vd_restoring_windowed_size;
     uint16_t vd_last_sent_dpi;
     uint16_t vd_fixed_dpi;
     uint64_t vd_resize_deadline_ns;
+    uint64_t vd_stretch_deadline_ns;
     double vd_scale;
 
     bool disconnected;
