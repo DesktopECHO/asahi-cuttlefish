@@ -16,7 +16,7 @@
 #define SC_VD_PRIMARY_RESIZE_DEBOUNCE_NS (UINT64_C(75) * 1000 * 1000)
 #define SC_VD_STRETCH_GRACE_NS (UINT64_C(1500) * 1000 * 1000)
 #define SC_WINDOW_MIN_WIDTH 360
-#define SC_WINDOW_MIN_HEIGHT 640
+#define SC_WINDOW_MIN_HEIGHT 600
 
 #define DOWNCAST(SINK) container_of(SINK, struct sc_screen, frame_sink)
 
