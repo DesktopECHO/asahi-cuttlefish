@@ -1,6 +1,6 @@
 Name:           cuttlefish-frontend
 Version:        1.50.0
-Release:        1%{?dist}
+Release:        2%{?dist}
 Summary:        Frontend and orchestration packages for Cuttlefish on Fedora
 License:        Apache-2.0
 URL:            https://github.com/google/android-cuttlefish

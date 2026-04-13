@@ -211,6 +211,11 @@ bool SetupBridgeGateway(std::string_view bridge_name,
 
   config.has_dnsmasq = true;
 
+  // On Fedora/RHEL, firewalld blocks DHCP (UDP port 67) on bridge interfaces
+  // unless the interface is in the trusted zone.
+  FirewallAddTrustedInterface(bridge_name);
+  config.has_firewall = true;
+
   auto ret = IptableConfig(network, true).ok();
   if (!ret) {
     CleanupBridgeGateway(bridge_name, ipaddr, config);
@@ -229,6 +234,10 @@ void CleanupBridgeGateway(std::string_view name, std::string_view ipaddr,
 
   if (config.has_iptable) {
     IptableConfig(network, false);
+  }
+
+  if (config.has_firewall) {
+    FirewallRemoveTrustedInterface(name);
   }
 
   if (config.has_dnsmasq) {
@@ -262,13 +271,15 @@ bool StartDnsmasq(std::string_view bridge_name, std::string_view gateway,
 
 bool StopDnsmasq(std::string_view name) {
   std::ifstream file;
-  std::string filename = absl::StrFormat(
-      "/var/run/cuttlefish-dnsmasq-%s.pid", name);
+  std::string filename =
+      absl::StrFormat("%s/cuttlefish-dnsmasq-%s.pid", CvdDir(), name);
+  std::string lease_filename =
+      absl::StrFormat("%s/cuttlefish-dnsmasq-%s.leases", CvdDir(), name);
   LOG(INFO) << "stopping dnsmasq for interface: " << name;
   file.open(filename);
-  if (file.is_open()) {
+  if (!file.is_open()) {
     LOG(INFO) << "dnsmasq file:" << filename
-              << " could not be opened, assume dnsmaq has already stopped";
+              << " could not be opened, assume dnsmasq has already stopped";
     return true;
   }
 
@@ -280,6 +291,8 @@ bool StopDnsmasq(std::string_view name) {
   bool ret = Execute({"kill", pid}) == 0;
   if (ret) {
     LOG(INFO) << "dnsmasq for:" << name << "successfully stopped";
+    std::remove(filename.c_str());
+    std::remove(lease_filename.c_str());
   } else {
     LOG(WARNING) << "Failed to stop dnsmasq for:" << name;
   }
@@ -290,11 +303,18 @@ bool CreateEthernetBridgeIface(std::string_view name,
                                std::string_view ipaddr) {
   auto exists = BridgeExists(name);
   if (exists.ok() && *exists) {
-    LOG(INFO) << "Bridge " << name << " exists already, doing nothing.";
-    return true;
+    LOG(INFO) << "Bridge " << name
+              << " exists already, ensuring it is administratively up.";
+    FirewallAddTrustedInterface(name);
+    return BringUpIface(name).ok();
   }
 
   if (!CreateBridge(name).ok()) {
+    return false;
+  }
+
+  if (!BringUpIface(name).ok()) {
+    DestroyBridge(name);
     return false;
   }
 
@@ -308,7 +328,7 @@ bool CreateEthernetBridgeIface(std::string_view name,
 
 bool DestroyEthernetBridgeIface(std::string_view name,
                                 std::string_view ipaddr) {
-  GatewayConfig config{true, true, true};
+  GatewayConfig config{true, true, true, true};
 
   // Don't need to check if removing some part of the config failed, we need to
   // remove the entire interface, so just ignore any error until the end

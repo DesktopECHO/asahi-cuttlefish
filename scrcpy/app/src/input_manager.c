@@ -304,19 +304,6 @@ reset_video(struct sc_input_manager *im) {
 }
 
 static void
-camera_set_torch(struct sc_input_manager *im, bool on) {
-    assert(im->controller && im->camera);
-
-    struct sc_control_msg msg;
-    msg.type = SC_CONTROL_MSG_TYPE_CAMERA_SET_TORCH;
-    msg.camera_set_torch.on = on;
-
-    if (!sc_controller_push_msg(im->controller, &msg)) {
-        LOGW("Could not request setting camera torch");
-    }
-}
-
-static void
 camera_zoom_in(struct sc_input_manager *im) {
     assert(im->controller && im->camera);
 
@@ -507,6 +494,11 @@ sc_input_manager_process_key(struct sc_input_manager *im,
                     sc_screen_resize_to_pixel_perfect(im->screen);
                 }
                 return;
+            case SDLK_T:
+                if (video && !shift && !repeat && down) {
+                    sc_screen_toggle_window_bordered(im->screen);
+                }
+                return;
             case SDLK_I:
                 if (video && !shift && !repeat && down) {
                     switch_fps_counter_state(im);
@@ -632,11 +624,6 @@ sc_input_manager_process_key(struct sc_input_manager *im,
 
         if (control && im->camera) {
             switch (sdl_keycode) {
-                case SDLK_T:
-                    if (!repeat && down) {
-                        camera_set_torch(im, !shift);
-                    }
-                    return;
                 case SDLK_DOWN:
                     if (!shift && down && !paused) {
                         // forward repeated events

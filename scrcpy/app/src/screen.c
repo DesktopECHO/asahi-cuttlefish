@@ -13,10 +13,15 @@
 
 #define DISPLAY_MARGINS 96
 #define SC_VD_RESIZE_DEBOUNCE_NS (UINT64_C(250) * 1000 * 1000)
-#define SC_VD_PRIMARY_RESIZE_DEBOUNCE_NS (UINT64_C(75) * 1000 * 1000)
+#define SC_VD_PRIMARY_RESIZE_DEBOUNCE_NS (UINT64_C(10) * 1000 * 1000)
 #define SC_VD_STRETCH_GRACE_NS (UINT64_C(1500) * 1000 * 1000)
 #define SC_WINDOW_MIN_WIDTH 360
 #define SC_WINDOW_MIN_HEIGHT 600
+#define SC_CLIENT_TITLEBAR_HEIGHT 32
+#define SC_CLIENT_DRAG_WIDTH 120
+#define SC_CLIENT_DRAG_HEIGHT 28
+#define SC_CLIENT_RESIZE_BORDER 8
+#define SC_CLIENT_RESIZE_CORNER 16
 
 #define DOWNCAST(SINK) container_of(SINK, struct sc_screen, frame_sink)
 
@@ -38,6 +43,13 @@ is_windowed(struct sc_screen *screen) {
     return !(SDL_GetWindowFlags(screen->window) & (SDL_WINDOW_FULLSCREEN
                                                  | SDL_WINDOW_MINIMIZED
                                                  | SDL_WINDOW_MAXIMIZED));
+}
+
+static inline bool
+sc_screen_has_client_titlebar(const struct sc_screen *screen) {
+    return screen->video
+        && (SDL_GetWindowFlags(screen->window) & SDL_WINDOW_BORDERLESS)
+        && !(SDL_GetWindowFlags(screen->window) & SDL_WINDOW_FULLSCREEN);
 }
 
 static bool
@@ -96,6 +108,55 @@ sc_screen_update_content_rect(struct sc_screen *screen);
 static struct sc_size
 get_window_size(const struct sc_screen *screen) {
     return sc_sdl_get_window_size(screen->window);
+}
+
+static SDL_HitTestResult SDLCALL
+sc_screen_hit_test(SDL_Window *window, const SDL_Point *area, void *data) {
+    (void) window;
+
+    const struct sc_screen *screen = data;
+    if (!sc_screen_has_client_titlebar(screen)) {
+        return SDL_HITTEST_NORMAL;
+    }
+
+    struct sc_size window_size = get_window_size(screen);
+    int x = area->x;
+    int y = area->y;
+    int width = (int) window_size.width;
+    int height = (int) window_size.height;
+
+    if (x < 0 || y < 0 || x >= width || y >= height) {
+        return SDL_HITTEST_NORMAL;
+    }
+
+    if (x < SC_CLIENT_DRAG_WIDTH && y < SC_CLIENT_DRAG_HEIGHT) {
+        return SDL_HITTEST_DRAGGABLE;
+    }
+
+    bool left = x < SC_CLIENT_RESIZE_BORDER;
+    bool right = x >= width - SC_CLIENT_RESIZE_BORDER;
+    bool bottom = y >= height - SC_CLIENT_RESIZE_BORDER;
+
+    if (y < SC_CLIENT_RESIZE_BORDER && x >= width - SC_CLIENT_RESIZE_CORNER) {
+        return SDL_HITTEST_RESIZE_TOPRIGHT;
+    }
+    if (bottom && x < SC_CLIENT_RESIZE_CORNER) {
+        return SDL_HITTEST_RESIZE_BOTTOMLEFT;
+    }
+    if (bottom && x >= width - SC_CLIENT_RESIZE_CORNER) {
+        return SDL_HITTEST_RESIZE_BOTTOMRIGHT;
+    }
+    if (bottom) {
+        return SDL_HITTEST_RESIZE_BOTTOM;
+    }
+    if (left) {
+        return SDL_HITTEST_RESIZE_LEFT;
+    }
+    if (right) {
+        return SDL_HITTEST_RESIZE_RIGHT;
+    }
+
+    return SDL_HITTEST_NORMAL;
 }
 
 static bool
@@ -494,6 +555,46 @@ sc_screen_render(struct sc_screen *screen, bool update_content_rect) {
         LOGE("Could not render texture: %s", SDL_GetError());
     }
 
+    if (sc_screen_has_client_titlebar(screen) && is_windowed(screen)) {
+        struct sc_size render_size = sc_sdl_get_render_output_size(renderer);
+
+        bool blend_ok = SDL_SetRenderDrawBlendMode(renderer,
+                                                   SDL_BLENDMODE_BLEND);
+        if (!blend_ok) {
+            LOGW("Could not enable titlebar blending: %s", SDL_GetError());
+        }
+
+        SDL_SetRenderDrawColor(renderer, 160, 160, 160, 128);
+        SDL_FRect top_border = {
+            .x = 0,
+            .y = 0,
+            .w = render_size.width,
+            .h = 1.f,
+        };
+        SDL_FRect left_border = {
+            .x = 0,
+            .y = 0,
+            .w = 1.f,
+            .h = render_size.height,
+        };
+        SDL_FRect right_border = {
+            .x = render_size.width - 1.f,
+            .y = 0,
+            .w = 1.f,
+            .h = render_size.height,
+        };
+        SDL_FRect bottom_border = {
+            .x = 0,
+            .y = render_size.height - 1.f,
+            .w = render_size.width,
+            .h = 1.f,
+        };
+        SDL_RenderFillRect(renderer, &top_border);
+        SDL_RenderFillRect(renderer, &left_border);
+        SDL_RenderFillRect(renderer, &right_border);
+        SDL_RenderFillRect(renderer, &bottom_border);
+    }
+
 end:
     sc_sdl_render_present(renderer);
 }
@@ -707,6 +808,13 @@ sc_screen_init(struct sc_screen *screen,
         if (!ok) {
             LOGW("Could not set window minimum size: %s", SDL_GetError());
         }
+    }
+
+    bool hit_test_ok = SDL_SetWindowHitTest(screen->window,
+                                            sc_screen_hit_test, screen);
+    if (!hit_test_ok) {
+        LOGW("Could not enable client window hit-testing: %s",
+             SDL_GetError());
     }
 
     screen->renderer = SDL_CreateRenderer(screen->window, NULL);
@@ -1159,6 +1267,47 @@ sc_screen_toggle_fullscreen(struct sc_screen *screen) {
     }
 
     LOGD("Requested %s mode", req_fullscreen ? "fullscreen" : "windowed");
+}
+
+void
+sc_screen_toggle_window_bordered(struct sc_screen *screen) {
+    bool bordered = SDL_GetWindowFlags(screen->window) & SDL_WINDOW_BORDERLESS;
+    struct sc_size window_size = get_window_size(screen);
+    struct sc_point window_position = sc_sdl_get_window_position(screen->window);
+    int old_top = 0;
+    int old_left = 0;
+    int old_bottom = 0;
+    int old_right = 0;
+    bool have_old_borders = SDL_GetWindowBordersSize(screen->window, &old_top,
+                                                     &old_left, &old_bottom,
+                                                     &old_right);
+
+    bool ok = SDL_SetWindowBordered(screen->window, bordered);
+    if (!ok) {
+        LOGW("Could not toggle window decorations: %s", SDL_GetError());
+        return;
+    }
+
+    // Best effort: keep the client area size and anchor when decorations
+    // appear/disappear. Some Wayland compositors ignore explicit positioning.
+    sc_sdl_set_window_size(screen->window, window_size);
+
+    int new_top = 0;
+    int new_left = 0;
+    int new_bottom = 0;
+    int new_right = 0;
+    bool have_new_borders = SDL_GetWindowBordersSize(screen->window, &new_top,
+                                                     &new_left, &new_bottom,
+                                                     &new_right);
+    if (have_old_borders && have_new_borders) {
+        struct sc_point new_position = {
+            .x = window_position.x + old_left - new_left,
+            .y = window_position.y + old_top - new_top,
+        };
+        sc_sdl_set_window_position(screen->window, new_position);
+    }
+
+    LOGD("Requested %s window decorations", bordered ? "enabled" : "disabled");
 }
 
 void

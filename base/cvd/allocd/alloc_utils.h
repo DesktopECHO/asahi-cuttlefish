@@ -47,6 +47,7 @@ struct GatewayConfig {
   bool has_gateway = false;
   bool has_dnsmasq = false;
   bool has_iptable = false;
+  bool has_firewall = false;
 };
 
 int RunExternalCommand(const std::string& command);

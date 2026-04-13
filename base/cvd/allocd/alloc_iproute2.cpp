@@ -104,4 +104,29 @@ Result<void> IptableConfig(std::string_view network, bool add) {
   return {};
 }
 
+// On Fedora/RHEL, firewalld blocks UDP port 67 (DHCP) on bridge interfaces
+// in the default zone. Add/remove the interface from the trusted zone so
+// dnsmasq can receive DHCP broadcasts from the guest.
+void FirewallAddTrustedInterface(std::string_view interface_name) {
+  // Skip if firewalld is not running.
+  if (Execute({"firewall-cmd", "--state"}) != 0) {
+    return;
+  }
+  int r = Execute({"firewall-cmd", "--zone=trusted",
+                   "--add-interface=" + std::string(interface_name)});
+  if (r != 0) {
+    LOG(WARNING) << "firewall-cmd --add-interface=" << interface_name
+                 << " failed (exit " << r
+                 << "). DHCP on this bridge may not work.";
+  }
+}
+
+void FirewallRemoveTrustedInterface(std::string_view interface_name) {
+  if (Execute({"firewall-cmd", "--state"}) != 0) {
+    return;
+  }
+  Execute({"firewall-cmd", "--zone=trusted",
+           "--remove-interface=" + std::string(interface_name)});
+}
+
 }  // namespace cuttlefish

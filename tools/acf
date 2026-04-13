@@ -12,10 +12,23 @@ LOCAL_CVD_BUILD_ROOT="${REPO_ROOT}/base/cvd/bazel-bin/cuttlefish"
 LOCAL_ASSEMBLE_CVD_BIN="${LOCAL_CVD_BUILD_ROOT}/host/commands/assemble_cvd/assemble_cvd"
 LOCAL_CVD_START_BIN="${LOCAL_CVD_BUILD_ROOT}/host/commands/start/cvd_internal_start"
 LOCAL_RUN_CVD_BIN="${LOCAL_CVD_BUILD_ROOT}/host/commands/run_cvd/run_cvd"
+LOCAL_CVDALLOC_BIN="${LOCAL_CVD_BUILD_ROOT}/host/commands/cvdalloc/cvdalloc"
+LOCAL_PROCESS_RESTARTER_BIN="${LOCAL_CVD_BUILD_ROOT}/host/commands/process_restarter/process_restarter"
 LOCAL_CVD_HOST_OUT="${REPO_ROOT}/.cache/cuttlefish-host-out"
 LOCAL_SCRCPY_BIN="${REPO_ROOT}/out/verify-scrcpy/app/scrcpy"
 LOCAL_SCRCPY_SERVER="${REPO_ROOT}/out/build-scrcpy-server/scrcpy-server"
 SCRCPY_ICON_DIR_DEFAULT="/usr/lib/cuttlefish-common/share/icons/hicolor/256x256/apps"
+
+cvdalloc_has_required_caps() {
+  local binary="$1"
+  local caps
+
+  [[ -x "${binary}" ]] || return 1
+  caps="$(getcap "${binary}" 2>/dev/null || true)"
+  [[ "${caps}" == *cap_net_admin* ]] || return 1
+  [[ "${caps}" == *cap_net_bind_service* ]] || return 1
+  [[ "${caps}" == *cap_net_raw* ]] || return 1
+}
 
 link_tree_contents() {
   local source_dir="$1"
@@ -58,6 +71,12 @@ prepare_local_host_out() {
   ln -sfn "${LOCAL_CVD_START_BIN}" "${LOCAL_CVD_HOST_OUT}/bin/cvd_internal_start"
   if [[ -x "${LOCAL_RUN_CVD_BIN}" ]]; then
     ln -sfn "${LOCAL_RUN_CVD_BIN}" "${LOCAL_CVD_HOST_OUT}/bin/run_cvd"
+  fi
+  if [[ -x "${LOCAL_PROCESS_RESTARTER_BIN}" ]]; then
+    ln -sfn "${LOCAL_PROCESS_RESTARTER_BIN}" "${LOCAL_CVD_HOST_OUT}/bin/process_restarter"
+  fi
+  if cvdalloc_has_required_caps "${LOCAL_CVDALLOC_BIN}"; then
+    ln -sfn "${LOCAL_CVDALLOC_BIN}" "${LOCAL_CVD_HOST_OUT}/bin/cvdalloc"
   fi
 }
 
@@ -126,7 +145,7 @@ declare -A CVD_GPU_DEFAULTS=(
 declare -A CVD_NETWORK_DEFAULTS=(
   [vhost_net]="true"
   [vhost_user_vsock]="false"
-  [enable_wifi]="true"
+  [enable_wifi]="false"
   [enable_modem_simulator]="false"
   [enable_host_uwb]="false"
   [netsim_bt]="true"
@@ -682,6 +701,8 @@ start_scrcpy_with_retries() {
     -s "${adb_serial}"
     --force-adb-forward
     --audio-buffer=60
+    --window-borderless
+    --mouse-bind=+hsn:b+++
   )
 
   if [[ -d "${SCRCPY_ICON_DIR_DEFAULT}" ]]; then

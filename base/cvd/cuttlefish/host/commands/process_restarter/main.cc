@@ -87,10 +87,11 @@ Result<int> RunProcessRestarter(std::vector<std::string> args) {
 
   for (;;) {
     CF_EXPECT(!exec_args.empty());
-    VLOG(1) << "Starting monitored process " << exec_args.front();
+    const std::string executable = exec_args.front();
+    VLOG(1) << "Starting monitored process " << executable;
     // The Execute() API and all APIs effectively called by it show the proper
     // error message using LOG(ERROR).
-    auto options = CF_EXPECT(OptionsForExecutable(exec_args.front()));
+    auto options = CF_EXPECT(OptionsForExecutable(executable));
     siginfo_t info =
         CF_EXPECTF(Execute(exec_args, std::move(options), WEXITED),
                    "Executing '{}' failed.", fmt::join(exec_args, "' '"));
@@ -100,7 +101,11 @@ Result<int> RunProcessRestarter(std::vector<std::string> args) {
       exec_args.pop_back();
     }
 
-    if (ShouldRestartProcess(info, parsed)) {
+    const bool should_restart = ShouldRestartProcess(info, parsed);
+    LOG(INFO) << "Managed process " << executable << " exited: si_code="
+              << info.si_code << " status=" << info.si_status
+              << " restart=" << should_restart;
+    if (should_restart) {
       continue;
     }
     if (info.si_code == CLD_EXITED) {

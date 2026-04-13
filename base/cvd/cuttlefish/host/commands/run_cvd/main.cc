@@ -132,7 +132,12 @@ class InstanceLifecycle : public LateInjected {
 
     CF_EXPECT(SetupFeature::RunSetup(setup_features_));
 
-    CF_EXPECT(server_loop_.Run());
+    auto server_loop_result = server_loop_.Run();
+    if (!server_loop_result.ok()) {
+      LOG(ERROR) << "run_cvd server loop exited: "
+                 << server_loop_result.error();
+      return server_loop_result;
+    }
 
     return {};
   }

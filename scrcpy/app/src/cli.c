@@ -1158,6 +1158,10 @@ static const struct sc_shortcut shortcuts[] = {
         .text = "Resize window to 1:1 (pixel-perfect)",
     },
     {
+        .shortcuts = { "MOD+t" },
+        .text = "Toggle window decorations/titlebar",
+    },
+    {
         .shortcuts = { "MOD+w", "Double-click on black borders" },
         .text = "Resize window to remove black borders",
     },
@@ -1261,14 +1265,6 @@ static const struct sc_shortcut shortcuts[] = {
     {
         .shortcuts = { "Drag & drop non-APK file" },
         .text = "Push file to device (see --push-target)",
-    },
-    {
-        .shortcuts = { "MOD+t" },
-        .text = "Turn on the camera torch (camera mode only)",
-    },
-    {
-        .shortcuts = { "MOD+Shift+t" },
-        .text = "Turn off the camera torch (camera mode only)",
     },
     {
         .shortcuts = { "MOD+Up" },

@@ -165,6 +165,10 @@ sc_screen_hide_window(struct sc_screen *screen);
 void
 sc_screen_toggle_fullscreen(struct sc_screen *screen);
 
+// toggle window decorations/titlebar
+void
+sc_screen_toggle_window_bordered(struct sc_screen *screen);
+
 // resize window to optimal size (remove black borders)
 void
 sc_screen_resize_to_fit(struct sc_screen *screen);

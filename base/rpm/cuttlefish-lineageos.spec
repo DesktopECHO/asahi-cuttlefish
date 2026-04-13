@@ -1,6 +1,6 @@
 Name:           cuttlefish-lineageos
 Version:        20260401
-Release:        1%{?dist}
+Release:        2%{?dist}
 Summary:        LineageOS for Cuttlefish host
 License:        Apache-2.0
 URL:            https://github.com/google/android-cuttlefish

@@ -842,7 +842,9 @@ public class Controller implements AsyncProcessor, VirtualDisplayListener {
             }
 
             Ln.i("Resize primary display to " + width + "x" + height + "/" + dpi);
-            if (Device.setDisplaySizeAndDensity(displayId, requestedSize, dpi)) {
+            int requestedDpi = dpi != lastPrimaryDisplayDpiRequest ? dpi : 0;
+            if (Device.setDisplaySizeAndDensity(displayId, requestedSize,
+                    requestedDpi)) {
                 lastPrimaryDisplaySizeRequest = requestedSize;
                 lastPrimaryDisplayDpiRequest = dpi;
             } else {
