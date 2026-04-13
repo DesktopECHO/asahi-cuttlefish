@@ -671,9 +671,9 @@ start_scrcpy_with_retries() {
 
     log "starting scrcpy for ${adb_serial} (attempt ${attempt})"
     if [[ "${fullscreen_mode}" == "true" ]]; then
-      /usr/lib/cuttlefish-common/bin/scrcpy --adaptive-primary-display="${CVD_X_RES}x${CVD_Y_RES}/${CVD_DPI}" -s "${adb_serial}" --force-adb-forward --fullscreen >/dev/null 2>&1 &
+      /usr/lib/cuttlefish-common/bin/scrcpy --mouse-bind=+hsn:b+++ --adaptive-primary-display -s "${adb_serial}" --force-adb-forward --fullscreen >/dev/null 2>&1 &
     else
-      /usr/lib/cuttlefish-common/bin/scrcpy --adaptive-primary-display="${CVD_X_RES}x${CVD_Y_RES}/${CVD_DPI}" -s "${adb_serial}" --force-adb-forward >/dev/null 2>&1 &
+      /usr/lib/cuttlefish-common/bin/scrcpy --mouse-bind=+hsn:b+++ --adaptive-primary-display -s "${adb_serial}" --force-adb-forward >/dev/null 2>&1 &
     fi
     disown || true
 

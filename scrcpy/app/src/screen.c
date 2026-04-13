@@ -15,6 +15,8 @@
 #define SC_VD_RESIZE_DEBOUNCE_NS (UINT64_C(250) * 1000 * 1000)
 #define SC_VD_PRIMARY_RESIZE_DEBOUNCE_NS (UINT64_C(75) * 1000 * 1000)
 #define SC_VD_STRETCH_GRACE_NS (UINT64_C(1500) * 1000 * 1000)
+#define SC_WINDOW_MIN_WIDTH 360
+#define SC_WINDOW_MIN_HEIGHT 640
 
 #define DOWNCAST(SINK) container_of(SINK, struct sc_screen, frame_sink)
 
@@ -685,6 +687,10 @@ sc_screen_init(struct sc_screen *screen,
     if (params->window_height) {
         height = params->window_height;
     }
+    if (params->video) {
+        width = MAX(width, SC_WINDOW_MIN_WIDTH);
+        height = MAX(height, SC_WINDOW_MIN_HEIGHT);
+    }
 
     // The window will be positioned and sized on first video frame
     screen->window =
@@ -692,6 +698,15 @@ sc_screen_init(struct sc_screen *screen,
     if (!screen->window) {
         LOGE("Could not create window: %s", SDL_GetError());
         goto error_destroy_fps_counter;
+    }
+
+    if (params->video) {
+        bool ok = SDL_SetWindowMinimumSize(screen->window,
+                                           SC_WINDOW_MIN_WIDTH,
+                                           SC_WINDOW_MIN_HEIGHT);
+        if (!ok) {
+            LOGW("Could not set window minimum size: %s", SDL_GetError());
+        }
     }
 
     screen->renderer = SDL_CreateRenderer(screen->window, NULL);
