@@ -127,6 +127,8 @@ SCRCPY_BIN="$(resolve_scrcpy_bin)"
 declare -A CVD_COMPUTE_DEFAULTS=(
   [cpus]="4"
   [memory_mb]="4096"
+  [prefer_performance_cores]="true"
+  [enable_bootanimation]="false"
 )
 
 # ============================================================================
