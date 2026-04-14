@@ -19,6 +19,13 @@ LOCAL_SCRCPY_BIN="${REPO_ROOT}/out/verify-scrcpy/app/scrcpy"
 LOCAL_SCRCPY_SERVER="${REPO_ROOT}/out/build-scrcpy-server/scrcpy-server"
 SCRCPY_ICON_DIR_DEFAULT="/usr/lib/cuttlefish-common/share/icons/hicolor/256x256/apps"
 
+count_performance_cores() {
+  local max_cap
+  max_cap="$(cat /sys/devices/system/cpu/cpu*/cpu_capacity 2>/dev/null | sort -n | tail -1)"
+  [[ -z "${max_cap}" ]] && { echo 0; return; }
+  grep -hxF "${max_cap}" /sys/devices/system/cpu/cpu*/cpu_capacity 2>/dev/null | wc -l
+}
+
 cvdalloc_has_required_caps() {
   local binary="$1"
   local caps
@@ -125,7 +132,7 @@ SCRCPY_BIN="$(resolve_scrcpy_bin)"
 # Compute Configuration Defaults (passed to cvd_internal_start)
 # ============================================================================
 declare -A CVD_COMPUTE_DEFAULTS=(
-  [cpus]="4"
+  [cpus]="$(count_performance_cores)"
   [memory_mb]="4096"
   [prefer_performance_cores]="true"
   [enable_bootanimation]="false"
