@@ -217,6 +217,7 @@ install -Dpm0644 base/rpm/cuttlefish-host-resources.service %{buildroot}/usr/lib
 install -Dpm0755 base/rpm/cuttlefish-host-resources.sh %{buildroot}/usr/libexec/cuttlefish/cuttlefish-host-resources
 install -Dpm0755 base/rpm/cuttlefish-add-user-to-groups.sh %{buildroot}/usr/libexec/cuttlefish/cuttlefish-add-user-to-groups
 install -Dpm0644 base/rpm/cuttlefish-host-resources.sysconfig %{buildroot}/etc/sysconfig/cuttlefish-host-resources
+install -Dpm0644 base/rpm/cuttlefish.xml %{buildroot}/etc/firewalld/zones/cuttlefish.xml
 
 install -Dpm0644 base/rpm/71-cuttlefish-integration.rules %{buildroot}/usr/lib/udev/rules.d/71-cuttlefish-integration.rules
 install -Dpm0644 base/host/packages/cuttlefish-integration/etc/modprobe.d/cuttlefish-integration.conf %{buildroot}/etc/modprobe.d/cuttlefish-integration.conf
@@ -282,6 +283,10 @@ if [ "${current_soft_nofile:-0}" -lt "$required_nofile" ] || \
   echo "Cuttlefish installed nofile=524288 and rtprio=10 for @cvdnetwork in /etc/security/limits.d/1_cuttlefish.conf." >&2
   echo "A new login session may be required before 'ulimit -n' and 'ulimit -r' reflect the higher limits." >&2
 fi
+# Reload firewalld to apply the cuttlefish zone (allows DHCP on bridge interfaces)
+if systemctl is-active --quiet firewalld 2>/dev/null; then
+  firewall-cmd --reload >/dev/null 2>&1 || :
+fi
 
 %post -n cuttlefish-defaults
 systemctl daemon-reload >/dev/null 2>&1 || :
@@ -289,6 +294,10 @@ systemctl daemon-reload >/dev/null 2>&1 || :
 %preun
 if [ $1 -eq 0 ]; then
   systemctl disable --now cuttlefish-host-resources.service >/dev/null 2>&1 || :
+  # Reload firewalld to remove the cuttlefish zone on uninstall
+  if systemctl is-active --quiet firewalld 2>/dev/null; then
+    firewall-cmd --reload >/dev/null 2>&1 || :
+  fi
 fi
 
 %preun -n cuttlefish-defaults
@@ -306,6 +315,7 @@ systemctl daemon-reload >/dev/null 2>&1 || :
 %license LICENSE
 /bin/acf
 /usr/lib/cuttlefish-common
+%config(noreplace) /etc/firewalld/zones/cuttlefish.xml
 /etc/NetworkManager/conf.d/99-cuttlefish.conf
 %config(noreplace) /etc/sysctl.d/99-cuttlefish.conf
 /etc/modules-load.d/cuttlefish-common.conf
