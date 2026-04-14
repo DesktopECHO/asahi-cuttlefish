@@ -456,7 +456,7 @@ EOF
   if [[ "${#add_groups[@]}" -gt 0 ]]; then
     cat <<EOF
 To add the missing account membership:
-  sudo usermod -aG ${add_groups[*]} ${USER}
+  pkexec /usr/libexec/cuttlefish/cuttlefish-add-user-to-groups
 
 EOF
   fi
