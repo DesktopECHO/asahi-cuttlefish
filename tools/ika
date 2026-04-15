@@ -112,7 +112,7 @@ resolve_scrcpy_bin() {
 }
 
 mkdir -p $HOME/.config/cuttlefish
-START_LOG_FILE="/tmp/acfstart.log"
+START_LOG_FILE="/tmp/ikastart.log"
 
 # ============================================================================
 # Environment Paths

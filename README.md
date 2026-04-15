@@ -31,43 +31,40 @@ sudo usermod -aG kvm,cvdnetwork,render,video "$USER"
 sudo reboot
 
 # 5. Launch
-acf start 
+ika start 
 ``` 
 
 A few seconds after the virtual device is started, `scrcpy` will automatically open.  Alternatively, visit `https://localhost:8443` in a browser to view the WebRTC virtual device console.
 
-## Managing the VM with `acf`
+## Managing the VM with `ika`
 
-After the RPMs are installed, `acf` is available on your `PATH` and can be used
+After the RPMs are installed, `ika` is available on your `PATH` and can be used
 to start, stop, and restart the packaged Cuttlefish environment.
 
 ```bash
 # Start a windowed VM
-acf start 
-
-# Start a fullscreen VM
-acf startfs 
+ika start 
 
 # Check whether the VM is running
-acf status
+ika status
 
 # Stop the VM and clear instance state
-acf stop
+ika stop
 
 # Restart with new launch arguments
-acf restart --gpu_mode=guest_swiftshader --cpus=8 --memory_mb=8192
+ika restart --gpu_mode=guest_swiftshader --cpus=8 --memory_mb=8192
 
 # Show the built-in usage text
-acf help
+ika help
 ```
 
-`acf start`, `acf startfs`, and `acf restart` pass extra arguments directly to
+`ika start` and `ika restart` pass extra arguments directly to
 `cvd_internal_start`, so you can override launch settings on the command line.
-`startfs` launches `scrcpy` in fullscreen mode after boot. `stop` calls the
-matching low-level stop helper (`cvd_internal_stop` or `stop_cvd`) with
-`--clear_instance_dirs` and then cleans up local Cuttlefish processes.
+`stop` calls the matching low-level stop helper (`cvd_internal_stop` or
+`stop_cvd`) with `--clear_instance_dirs` and then cleans up local Cuttlefish
+processes.
 
-By default `acf` uses:
+By default `ika` uses:
 
 - host tools from `/usr/lib/cuttlefish-common`
 - the packaged LineageOS tree from `/usr/share/cuttlefish-common/lineageos`
@@ -100,7 +97,7 @@ For the local Fedora/Asahi workflow, `cuttlefish-base`, `cuttlefish-user`, and
 On ARM64 Asahi Linux, `guest_swiftshader` is the safe documented GPU mode for
 the packaged workflow in this fork.
 
-`acf` expects your login session to be in `kvm`, `cvdnetwork`, `render`, and
+`ika` expects your login session to be in `kvm`, `cvdnetwork`, `render`, and
 `video`. Log out fully and back in after changing group membership.
 
 Bazel is installed automatically through Bazelisk by

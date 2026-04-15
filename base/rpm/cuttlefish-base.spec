@@ -206,7 +206,7 @@ find %{buildroot}/usr/lib/cuttlefish-common/etc -type f -exec chmod -x '{}' ';'
 find %{buildroot}/usr/lib/cuttlefish-common/usr/share/webrtc/assets -type f -exec chmod -x '{}' ';'
 
 install -Dpm0755 base/host/deploy/capability_query.py %{buildroot}/usr/lib/cuttlefish-common/bin/capability_query.py
-install -Dpm0755 tools/acf %{buildroot}/bin/acf
+install -Dpm0755 tools/ika %{buildroot}/bin/ika
 install -Dpm0644 base/host/packages/cuttlefish-base/etc/NetworkManager/conf.d/99-cuttlefish.conf %{buildroot}/etc/NetworkManager/conf.d/99-cuttlefish.conf
 install -Dpm0644 base/rpm/99-cuttlefish.conf %{buildroot}/etc/sysctl.d/99-cuttlefish.conf
 install -Dpm0644 base/host/packages/cuttlefish-base/etc/modules-load.d/cuttlefish-common.conf %{buildroot}/etc/modules-load.d/cuttlefish-common.conf
@@ -313,7 +313,7 @@ systemctl daemon-reload >/dev/null 2>&1 || :
 
 %files
 %license LICENSE
-/bin/acf
+/bin/ika
 /usr/lib/cuttlefish-common
 %config(noreplace) /etc/firewalld/zones/cuttlefish.xml
 /etc/NetworkManager/conf.d/99-cuttlefish.conf
