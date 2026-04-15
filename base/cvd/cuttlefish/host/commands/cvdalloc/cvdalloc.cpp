@@ -51,10 +51,8 @@ Result<void> Allocate(int id, std::string_view ethernet_bridge_name,
                       bool enable_mobile) {
   LOG(INFO) << "cvdalloc: allocating network resources";
 
-  if (enable_mobile) {
-    CF_EXPECT(CreateMobileIface(CvdallocInterfaceName("mtap", id), id,
-                                kCvdallocMobileIpPrefix));
-  }
+  CF_EXPECT(CreateMobileIface(CvdallocInterfaceName("mtap", id), id,
+                              kCvdallocMobileIpPrefix));
   if (enable_wifi) {
     CF_EXPECT(CreateEthernetBridgeIface(wireless_bridge_name,
                                         kCvdallocWirelessIpPrefix));
@@ -76,10 +74,8 @@ Result<void> Teardown(int id, std::string_view ethernet_bridge_name,
                       bool enable_mobile) {
   LOG(INFO) << "cvdalloc: tearing down resources";
 
-  if (enable_mobile) {
-    DestroyMobileIface(CvdallocInterfaceName("mtap", id), id,
-                       kCvdallocMobileIpPrefix);
-  }
+  DestroyMobileIface(CvdallocInterfaceName("mtap", id), id,
+                     kCvdallocMobileIpPrefix);
   if (enable_wifi) {
     DestroyMobileIface(CvdallocInterfaceName("wtap", id), id,
                        kCvdallocWirelessIpPrefix);
