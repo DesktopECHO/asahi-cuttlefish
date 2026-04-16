@@ -20,10 +20,12 @@ BuildRequires:  jsoncpp-devel
 BuildRequires:  libX11-devel
 BuildRequires:  libXext-devel
 BuildRequires:  libcurl-devel
+BuildRequires:  libavdevice-free-devel
 BuildRequires:  libdrm-devel
 BuildRequires:  libuuid-devel
 BuildRequires:  libxml2-devel
 BuildRequires:  libsrtp-devel
+BuildRequires:  libswscale-free-devel
 BuildRequires:  opus-devel
 BuildRequires:  openssl-devel
 BuildRequires:  pkgconf-pkg-config
