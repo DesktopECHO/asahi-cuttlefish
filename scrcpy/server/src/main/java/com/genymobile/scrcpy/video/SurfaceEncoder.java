@@ -31,6 +31,8 @@ public class SurfaceEncoder implements AsyncProcessor {
     private static final int DEFAULT_I_FRAME_INTERVAL = 10; // seconds
     private static final int REPEAT_FRAME_DELAY_US = 100_000; // repeat after 100ms
     private static final String KEY_MAX_FPS_TO_ENCODER = "max-fps-to-encoder";
+    private static final int AVC_4K_LONG_SIDE = 3840;
+    private static final int AVC_4K_SHORT_SIDE = 2160;
 
     // Keep the values in descending order
     private static final int[] MAX_SIZE_FALLBACK = {2560, 1920, 1600, 1280, 1024, 800};
@@ -65,7 +67,7 @@ public class SurfaceEncoder implements AsyncProcessor {
     private void streamCapture() throws IOException, ConfigurationException {
         Codec codec = streamer.getCodec();
         MediaCodec mediaCodec = createMediaCodec(codec, encoderName);
-        MediaFormat format = createFormat(codec.getMimeType(), videoBitRate, maxFps, codecOptions);
+        MediaCodecInfo.CodecCapabilities codecCapabilities = mediaCodec.getCodecInfo().getCapabilitiesForType(codec.getMimeType());
 
         capture.init(reset);
 
@@ -82,8 +84,7 @@ public class SurfaceEncoder implements AsyncProcessor {
                     headerWritten = true;
                 }
 
-                format.setInteger(MediaFormat.KEY_WIDTH, size.getWidth());
-                format.setInteger(MediaFormat.KEY_HEIGHT, size.getHeight());
+                MediaFormat format = createFormat(codec.getMimeType(), videoBitRate, maxFps, codecOptions, codecCapabilities, size);
 
                 Surface surface = null;
                 boolean mediaCodecStarted = false;
@@ -194,6 +195,58 @@ public class SurfaceEncoder implements AsyncProcessor {
         return 0;
     }
 
+    private static boolean hasCodecOption(List<CodecOption> codecOptions, String key) {
+        if (codecOptions == null) {
+            return false;
+        }
+
+        for (CodecOption option : codecOptions) {
+            if (key.equals(option.getKey())) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static boolean is4kSize(Size size) {
+        int longSide = size.getMax();
+        int shortSide = Math.min(size.getWidth(), size.getHeight());
+        return longSide >= AVC_4K_LONG_SIDE && shortSide >= AVC_4K_SHORT_SIDE;
+    }
+
+    private static MediaCodecInfo.CodecProfileLevel chooseAvcProfileLevelFor4k(MediaCodecInfo.CodecCapabilities codecCapabilities) {
+        if (codecCapabilities == null) {
+            return null;
+        }
+        MediaCodecInfo.CodecProfileLevel[] profileLevels = codecCapabilities.profileLevels;
+        if (profileLevels == null || profileLevels.length == 0) {
+            return null;
+        }
+
+        MediaCodecInfo.CodecProfileLevel bestBaseline = null;
+        MediaCodecInfo.CodecProfileLevel best = null;
+        for (MediaCodecInfo.CodecProfileLevel profileLevel : profileLevels) {
+            if (best == null || profileLevel.level > best.level) {
+                best = profileLevel;
+            }
+            if (profileLevel.profile == MediaCodecInfo.CodecProfileLevel.AVCProfileBaseline
+                    && (bestBaseline == null || profileLevel.level > bestBaseline.level)) {
+                bestBaseline = profileLevel;
+            }
+        }
+
+        if (bestBaseline != null && bestBaseline.level >= MediaCodecInfo.CodecProfileLevel.AVCLevel51) {
+            return bestBaseline;
+        }
+
+        if (best != null && best.level >= MediaCodecInfo.CodecProfileLevel.AVCLevel51) {
+            return best;
+        }
+
+        return null;
+    }
+
     private void encode(MediaCodec codec, Streamer streamer) throws IOException {
         MediaCodec.BufferInfo bufferInfo = new MediaCodec.BufferInfo();
 
@@ -253,10 +306,13 @@ public class SurfaceEncoder implements AsyncProcessor {
         }
     }
 
-    private static MediaFormat createFormat(String videoMimeType, int bitRate, float maxFps, List<CodecOption> codecOptions) {
+    private static MediaFormat createFormat(String videoMimeType, int bitRate, float maxFps, List<CodecOption> codecOptions,
+            MediaCodecInfo.CodecCapabilities codecCapabilities, Size size) {
         MediaFormat format = new MediaFormat();
         format.setString(MediaFormat.KEY_MIME, videoMimeType);
         format.setInteger(MediaFormat.KEY_BIT_RATE, bitRate);
+        format.setInteger(MediaFormat.KEY_WIDTH, size.getWidth());
+        format.setInteger(MediaFormat.KEY_HEIGHT, size.getHeight());
         // must be present to configure the encoder, but does not impact the actual frame rate, which is variable
         format.setInteger(MediaFormat.KEY_FRAME_RATE, 60);
         format.setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface);
@@ -271,6 +327,23 @@ public class SurfaceEncoder implements AsyncProcessor {
             // <https://android.googlesource.com/platform/frameworks/base/+/625f0aad9f7a259b6881006ad8710adce57d1384%5E%21/>
             // <https://github.com/Genymobile/scrcpy/issues/488#issuecomment-567321437>
             format.setFloat(KEY_MAX_FPS_TO_ENCODER, maxFps);
+        }
+
+        // Some AVC encoders require an explicit AVC 5.1 profile/level pair to
+        // accept 4K H.264 encoding.
+        if (MediaFormat.MIMETYPE_VIDEO_AVC.equals(videoMimeType)
+                && is4kSize(size)
+                && !hasCodecOption(codecOptions, MediaFormat.KEY_PROFILE)
+                && !hasCodecOption(codecOptions, MediaFormat.KEY_LEVEL)) {
+            MediaCodecInfo.CodecProfileLevel profileLevel = chooseAvcProfileLevelFor4k(codecCapabilities);
+            if (profileLevel != null) {
+                format.setInteger(MediaFormat.KEY_PROFILE, profileLevel.profile);
+                format.setInteger(MediaFormat.KEY_LEVEL, profileLevel.level);
+                Ln.d("Video codec option set: " + MediaFormat.KEY_PROFILE + " (Integer) = " + profileLevel.profile + " (auto)");
+                Ln.d("Video codec option set: " + MediaFormat.KEY_LEVEL + " (Integer) = " + profileLevel.level + " (auto)");
+            } else {
+                Ln.w("4K H.264 requested, but encoder does not advertise AVC Level 5.1 support");
+            }
         }
 
         if (codecOptions != null) {
