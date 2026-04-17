@@ -102,7 +102,7 @@ public final class CleanUp {
 
         int displayId = options.getDisplayId();
 
-        boolean restorePrimaryDisplay = options.getAdaptivePrimaryDisplay()
+        boolean restorePrimaryDisplay = options.getFlexDisplay()
                 && displayId == 0;
         Size restoreDisplaySizeOverride = null;
         int restoreDisplayDensityOverride = -1;

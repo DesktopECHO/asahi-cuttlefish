@@ -93,7 +93,6 @@ enum {
     OPT_AUDIO_DUP,
     OPT_GAMEPAD,
     OPT_NEW_DISPLAY,
-    OPT_ADAPTIVE_PRIMARY_DISPLAY,
     OPT_LIST_APPS,
     OPT_START_APP,
     OPT_SCREEN_OFF_TIMEOUT,
@@ -243,9 +242,8 @@ static const struct sc_option options[] = {
         .argdesc = "ms",
         .text = "Configure the size of the SDL audio output buffer (in "
                 "milliseconds).\n"
-                "If you get \"robotic\" audio playback, you should test with "
-                "a higher value (10). Do not change this setting otherwise.\n"
-                "Default is 5.",
+                "Do not change this setting unless you have a good reason.\n"
+                "Default is 10.",
     },
     {
         .shortopt = 'b',
@@ -586,17 +584,6 @@ static const struct sc_option options[] = {
                 "    --new-display=/240    # main display size and 240 dpi",
     },
     {
-        .longopt_id = OPT_ADAPTIVE_PRIMARY_DISPLAY,
-        .longopt = "adaptive-primary-display",
-        .argdesc = "[dpi]",
-        .optional_arg = true,
-        .text = "Resize the primary Android display to follow the scrcpy "
-                "window size.\n"
-                "This changes the logical size of display 0 dynamically.\n"
-                "Optionally provide the fixed display density to keep while "
-                "the resolution changes.",
-    },
-    {
         .longopt_id = OPT_NO_AUDIO,
         .longopt = "no-audio",
         .text = "Disable audio forwarding.",
@@ -803,8 +790,8 @@ static const struct sc_option options[] = {
                 "bottom or at the sides if needed).\n"
                 "\"disabled\": render the display at the top-left corner, "
                 "without scaling.\n"
-                "Default is \"natural\", unless --flex-display is set, in "
-                "which case it is \"disabled\".",
+                "Default is \"natural\". With --flex-display, scrcpy fills the "
+                "window after the display resize is applied.",
     },
     {
         .longopt_id = OPT_REQUIRE_AUDIO,
@@ -1032,7 +1019,13 @@ static const struct sc_option options[] = {
     {
         .shortopt = 'x',
         .longopt = "flex-display",
-        .text = "Continuously resize the virtual display to match the window.",
+        .argdesc = "[dpi]",
+        .optional_arg = true,
+        .text = "Continuously resize the display to match the window.\n"
+                "This applies to displays created with --new-display, and to "
+                "the primary display (display 0).\n"
+                "Optionally provide a fixed display density for primary "
+                "display resizing.",
     },
 };
 
@@ -2780,15 +2773,6 @@ parse_args_with_getopt(struct scrcpy_cli_args *args, int argc, char *argv[],
             case OPT_NEW_DISPLAY:
                 opts->new_display = optarg ? optarg : "";
                 break;
-            case OPT_ADAPTIVE_PRIMARY_DISPLAY:
-                opts->adaptive_primary_display = true;
-                opts->flex_display = true;
-                if (optarg
-                        && !parse_display_dpi(
-                            optarg, &opts->adaptive_primary_display_dpi)) {
-                    return false;
-                }
-                break;
             case OPT_START_APP:
                 opts->start_app = optarg;
                 break;
@@ -2829,6 +2813,9 @@ parse_args_with_getopt(struct scrcpy_cli_args *args, int argc, char *argv[],
                 break;
             case 'x':
                 opts->flex_display = true;
+                if (optarg && !parse_display_dpi(optarg, &opts->flex_display_dpi)) {
+                    return false;
+                }
                 break;
             default:
                 // getopt prints the error message on stderr
@@ -3009,22 +2996,8 @@ parse_args_with_getopt(struct scrcpy_cli_args *args, int argc, char *argv[],
         }
     }
 
-    if (opts->adaptive_primary_display) {
-        if (opts->video_source != SC_VIDEO_SOURCE_DISPLAY) {
-            LOGE("--adaptive-primary-display is only available with "
-                 "--video-source=display");
-            return false;
-        }
-
-        if (!opts->video) {
-            LOGE("--adaptive-primary-display is incompatible with --no-video");
-            return false;
-        }
-    }
-
     if (opts->render_fit == SC_RENDER_FIT_AUTO) {
-        opts->render_fit = opts->flex_display ? SC_RENDER_FIT_DISABLED
-                                              : SC_RENDER_FIT_NATURAL;
+        opts->render_fit = SC_RENDER_FIT_NATURAL;
     }
 
     if (otg) {
@@ -3147,11 +3120,20 @@ parse_args_with_getopt(struct scrcpy_cli_args *args, int argc, char *argv[],
     }
 
     if (opts->flex_display) {
-        if (!opts->adaptive_primary_display
-                && (opts->video_source != SC_VIDEO_SOURCE_DISPLAY
-                    || !opts->new_display)) {
-            LOGE("-x/--flex-display can only be applied to displays created "
-                 "with --new-display, or with --adaptive-primary-display");
+        if (opts->video_source != SC_VIDEO_SOURCE_DISPLAY) {
+            LOGE("-x/--flex-display is only available with "
+                 "--video-source=display");
+            return false;
+        }
+
+        if (!opts->video) {
+            LOGE("-x/--flex-display is incompatible with --no-video");
+            return false;
+        }
+
+        if (!opts->new_display && opts->display_id != 0) {
+            LOGE("-x/--flex-display is only supported on --new-display or "
+                 "on the primary display (--display-id=0)");
             return false;
         }
 
@@ -3167,16 +3149,6 @@ parse_args_with_getopt(struct scrcpy_cli_args *args, int argc, char *argv[],
 
         // Force free resizing
         opts->window_aspect_ratio_lock = false;
-    }
-
-    if (opts->adaptive_primary_display && opts->new_display) {
-        LOGE("--adaptive-primary-display is incompatible with --new-display");
-        return false;
-    }
-
-    if (opts->adaptive_primary_display && opts->display_id != 0) {
-        LOGE("--adaptive-primary-display only works on the primary display");
-        return false;
     }
 
     if (opts->display_ime_policy != SC_DISPLAY_IME_POLICY_UNDEFINED

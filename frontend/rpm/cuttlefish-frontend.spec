@@ -1,4 +1,4 @@
-Name:           cuttlefish-frontend
+Name:           ika-frontend
 Version:        1.50.0
 Release:        4%{?dist}
 Summary:        Frontend and orchestration packages for Cuttlefish on Fedora
@@ -19,22 +19,27 @@ BuildRequires:  systemd-rpm-macros
 Builds the operator and orchestration packages used to interact with
 Cuttlefish instances.
 
-%package -n cuttlefish-user
+Provides:       cuttlefish-frontend = %{version}-%{release}
+Obsoletes:      cuttlefish-frontend < %{version}-%{release}
+
+%package -n ika-user
 Summary:        Operator service for browser access to Cuttlefish
-Requires:       cuttlefish-base = %{version}-%{release}
+Requires:       ika-base = %{version}-%{release}
 Requires:       openssl
 Requires(post): /usr/sbin/useradd
 Requires(post): /usr/bin/systemctl
 Requires(preun): /usr/bin/systemctl
 Requires(postun): /usr/bin/systemctl
+Provides:       cuttlefish-user = %{version}-%{release}
+Obsoletes:      cuttlefish-user < %{version}-%{release}
 
-%description -n cuttlefish-user
+%description -n ika-user
 Contains the host operator service that exposes the browser-facing control
 plane for Cuttlefish.
 
-%package -n cuttlefish-orchestration
+%package -n ika-orchestration
 Summary:        Host Orchestrator service for Cuttlefish
-Requires:       cuttlefish-user = %{version}-%{release}
+Requires:       ika-user = %{version}-%{release}
 Requires:       nginx
 Requires:       openssl
 Requires:       systemd-journal-remote
@@ -43,8 +48,10 @@ Requires(post): /usr/sbin/usermod
 Requires(post): /usr/bin/systemctl
 Requires(preun): /usr/bin/systemctl
 Requires(postun): /usr/bin/systemctl
+Provides:       cuttlefish-orchestration = %{version}-%{release}
+Obsoletes:      cuttlefish-orchestration < %{version}-%{release}
 
-%description -n cuttlefish-orchestration
+%description -n ika-orchestration
 Contains the Host Orchestrator service and nginx configuration used to expose
 artifact and log access for Cuttlefish.
 
@@ -82,7 +89,7 @@ mkdir -p %{buildroot}/usr/bin
 ln -sfn ../lib/cuttlefish-common/bin/host_orchestrator %{buildroot}/usr/bin/cvd_host_orchestrator
 ln -sfn ../lib/cuttlefish-common/bin/cvd %{buildroot}/usr/bin/fetch_cvd
 
-%post -n cuttlefish-user
+%post -n ika-user
 if ! getent passwd _cutf-operator >/dev/null 2>&1; then
   useradd -r -M -d /var/empty -g cvdnetwork _cutf-operator >/dev/null 2>&1 || :
 fi
@@ -90,30 +97,30 @@ usermod -a -G video,render _cutf-operator >/dev/null 2>&1 || :
 systemctl daemon-reload >/dev/null 2>&1 || :
 systemctl enable --now cuttlefish-operator.service >/dev/null 2>&1 || :
 
-%post -n cuttlefish-orchestration
+%post -n ika-orchestration
 if ! getent passwd httpcvd >/dev/null 2>&1; then
   useradd -r -M -d /var/empty httpcvd >/dev/null 2>&1 || :
 fi
 usermod -a -G cvdnetwork,kvm,video,render httpcvd >/dev/null 2>&1 || :
 systemctl daemon-reload >/dev/null 2>&1 || :
 
-%preun -n cuttlefish-user
+%preun -n ika-user
 if [ $1 -eq 0 ]; then
   systemctl disable --now cuttlefish-operator.service >/dev/null 2>&1 || :
 fi
 
-%preun -n cuttlefish-orchestration
+%preun -n ika-orchestration
 if [ $1 -eq 0 ]; then
   systemctl disable --now cuttlefish-host_orchestrator.service >/dev/null 2>&1 || :
 fi
 
-%postun -n cuttlefish-user
+%postun -n ika-user
 systemctl daemon-reload >/dev/null 2>&1 || :
 
-%postun -n cuttlefish-orchestration
+%postun -n ika-orchestration
 systemctl daemon-reload >/dev/null 2>&1 || :
 
-%files -n cuttlefish-user
+%files -n ika-user
 %license LICENSE
 /etc/sysconfig/cuttlefish-operator
 /usr/bin/cvd_host_orchestrator
@@ -123,7 +130,7 @@ systemctl daemon-reload >/dev/null 2>&1 || :
 /usr/libexec/cuttlefish/cuttlefish-operator-prepare
 /usr/share/cuttlefish-common/operator
 
-%files -n cuttlefish-orchestration
+%files -n ika-orchestration
 %license LICENSE
 /etc/nginx/conf.d/cuttlefish-orchestration.conf
 /etc/sysconfig/cuttlefish-host_orchestrator

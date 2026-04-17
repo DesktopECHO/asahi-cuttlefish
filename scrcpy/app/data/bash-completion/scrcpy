@@ -52,8 +52,6 @@ _scrcpy() {
         -N --no-playback
         --new-display
         --new-display=
-        --adaptive-primary-display
-        --adaptive-primary-display=
         --no-audio
         --no-audio-playback
         --no-cleanup
@@ -111,7 +109,8 @@ _scrcpy() {
         --window-y=
         --window-width=
         --window-height=
-        -x --flex-display"
+        -x --flex-display
+        --flex-display="
 
     _init_completion -s || return
 
@@ -219,7 +218,7 @@ _scrcpy() {
         |--max-fps \
         |-m|--max-size \
         |--new-display \
-        |--adaptive-primary-display \
+        |--flex-display \
         |-p|--port \
         |--push-target \
         |--rotation \

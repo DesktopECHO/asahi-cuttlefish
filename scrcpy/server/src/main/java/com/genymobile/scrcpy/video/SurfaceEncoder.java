@@ -74,6 +74,7 @@ public class SurfaceEncoder implements AsyncProcessor {
         try {
             boolean alive;
             boolean headerWritten = false;
+            Size currentSessionSize = null;
 
             do {
                 reset.consumeReset(); // If a capture reset was requested, it is implicitly fulfilled
@@ -82,6 +83,13 @@ public class SurfaceEncoder implements AsyncProcessor {
                 if (!headerWritten) {
                     streamer.writeVideoHeader(size);
                     headerWritten = true;
+                    currentSessionSize = size;
+                } else if (!size.equals(currentSessionSize)) {
+                    // The capture was reset with a new size: inform the client
+                    // so decoder/session expectations stay in sync.
+                    streamer.writeSessionMeta(size.getWidth(), size.getHeight(),
+                            false);
+                    currentSessionSize = size;
                 }
 
                 MediaFormat format = createFormat(codec.getMimeType(), videoBitRate, maxFps, codecOptions, codecCapabilities, size);
@@ -118,11 +126,25 @@ public class SurfaceEncoder implements AsyncProcessor {
                         // Do not retry on broken pipe, which is expected on close because the socket is closed by the client
                         throw e;
                     }
-                    Ln.e("Capture/encoding error: " + e.getClass().getName() + ": " + e.getMessage());
-                    if (!prepareRetry(size)) {
-                        throw e;
+                    // On some devices, a capture reset may interrupt dequeueOutputBuffer()
+                    // with IllegalStateException ("Pending dequeue output buffer request
+                    // cancelled"). This is expected while reconfiguring after a resize.
+                    boolean resetRequested = reset.consumeReset();
+                    if (resetRequested) {
+                        alive = !stopped.get() && !capture.isClosed();
+                    } else if (isOutputDequeueCancellation(e)) {
+                        // This is often transient while resizing/reconfiguring
+                        // display capture. Retry without exhausting the
+                        // consecutive error budget.
+                        alive = !stopped.get() && !capture.isClosed();
+                        SystemClock.sleep(20);
+                    } else {
+                        Ln.e("Capture/encoding error: " + e.getClass().getName() + ": " + e.getMessage());
+                        if (!prepareRetry(size)) {
+                            throw e;
+                        }
+                        alive = true;
                     }
-                    alive = true;
                 } finally {
                     reset.setRunningMediaCodec(null);
                     if (captureStarted) {
@@ -245,6 +267,29 @@ public class SurfaceEncoder implements AsyncProcessor {
         }
 
         return null;
+    }
+
+    private static boolean isOutputDequeueCancellation(Exception e) {
+        if (!(e instanceof IllegalStateException)) {
+            return false;
+        }
+
+        String message = e.getMessage();
+        if (message != null
+                && message.contains("Pending dequeue output buffer request cancelled")) {
+            return true;
+        }
+
+        StackTraceElement[] stackTrace = e.getStackTrace();
+        if (stackTrace.length == 0) {
+            return false;
+        }
+
+        String className = stackTrace[0].getClassName();
+        String methodName = stackTrace[0].getMethodName();
+        return "android.media.MediaCodec".equals(className)
+                && ("dequeueOutputBuffer".equals(methodName)
+                || "native_dequeueOutputBuffer".equals(methodName));
     }
 
     private void encode(MediaCodec codec, Streamer streamer) throws IOException {

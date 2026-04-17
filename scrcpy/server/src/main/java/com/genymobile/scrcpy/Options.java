@@ -65,8 +65,8 @@ public class Options {
     private boolean powerOn = true;
 
     private NewDisplay newDisplay;
-    private boolean adaptivePrimaryDisplay;
-    private int adaptivePrimaryDisplayDpi;
+    private boolean flexDisplay;
+    private int flexDisplayDpi;
     private boolean vdDestroyContent = true;
     private boolean vdSystemDecorations = true;
 
@@ -265,12 +265,12 @@ public class Options {
         return vdSystemDecorations;
     }
 
-    public boolean getAdaptivePrimaryDisplay() {
-        return adaptivePrimaryDisplay;
+    public boolean getFlexDisplay() {
+        return flexDisplay;
     }
 
-    public int getAdaptivePrimaryDisplayDpi() {
-        return adaptivePrimaryDisplayDpi;
+    public int getFlexDisplayDpi() {
+        return flexDisplayDpi;
     }
 
     public boolean getList() {
@@ -518,15 +518,15 @@ public class Options {
                 case "new_display":
                     options.newDisplay = parseNewDisplay(value);
                     break;
-                case "adaptive_primary_display":
-                    options.adaptivePrimaryDisplay = Boolean.parseBoolean(value);
+                case "flex_display":
+                    options.flexDisplay = Boolean.parseBoolean(value);
                     break;
-                case "adaptive_primary_display_dpi":
-                    options.adaptivePrimaryDisplayDpi = Integer.parseInt(value);
-                    if (options.adaptivePrimaryDisplayDpi < 0
-                            || options.adaptivePrimaryDisplayDpi > 0xFFFF) {
-                        throw new IllegalArgumentException("adaptive_primary_display_dpi ("
-                                + options.adaptivePrimaryDisplayDpi
+                case "flex_display_dpi":
+                    options.flexDisplayDpi = Integer.parseInt(value);
+                    if (options.flexDisplayDpi < 0
+                            || options.flexDisplayDpi > 0xFFFF) {
+                        throw new IllegalArgumentException("flex_display_dpi ("
+                                + options.flexDisplayDpi
                                 + ") must be in [0; 65535]");
                     }
                     break;

@@ -1,4 +1,4 @@
-Name:           cuttlefish-integration-gigabyte-arm64
+Name:           ika-integration-gigabyte-arm64
 Version:        1.50.0
 Release:        4%{?dist}
 Summary:        Gigabyte Ampere integration package for Cuttlefish on Fedora
@@ -21,6 +21,9 @@ Requires:       pkgconf-pkg-config
 %description
 Contains Gigabyte Ampere host integration files and version metadata for
 Cuttlefish deployments on Fedora.
+
+Provides:       cuttlefish-integration-gigabyte-arm64 = %{version}-%{release}
+Obsoletes:      cuttlefish-integration-gigabyte-arm64 < %{version}-%{release}
 
 %prep
 %autosetup -n android-cuttlefish-%{version}

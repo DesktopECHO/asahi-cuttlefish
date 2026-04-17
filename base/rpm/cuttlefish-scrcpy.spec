@@ -1,4 +1,4 @@
-Name:           cuttlefish-scrcpy
+Name:           ika-scrcpy
 Version:        3.3.4
 Release:        4%{?dist}
 Summary:        scrcpy Android screen mirroring tool for Cuttlefish
@@ -18,7 +18,7 @@ BuildRequires:  libswresample-free-devel
 BuildRequires:  SDL3-devel
 BuildRequires:  libusb1-devel
 
-Requires:       cuttlefish-base
+Requires:       ika-base
 Requires:       libavcodec-free
 Requires:       libavformat-free
 Requires:       libavutil-free
@@ -30,6 +30,9 @@ Requires:       libusb1
 Contains scrcpy, a command-line Android screen mirroring and control tool,
 installed for use with Cuttlefish Android Virtual Devices under
 /usr/lib/cuttlefish-common.
+
+Provides:       cuttlefish-scrcpy = %{version}-%{release}
+Obsoletes:      cuttlefish-scrcpy < %{version}-%{release}
 
 %prep
 %autosetup -n android-cuttlefish-1.50.0

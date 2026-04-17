@@ -22,6 +22,7 @@
 #include "trait/key_processor.h"
 #include "trait/frame_sink.h"
 #include "trait/mouse_processor.h"
+#include "util/tick.h"
 
 #ifdef __APPLE__
 # define SC_DISPLAY_FORCE_OPENGL_CORE_PROFILE
@@ -71,6 +72,21 @@ struct sc_screen {
 
     struct sc_size frame_size;
     struct sc_size content_size; // rotated frame_size
+    // Last requested remote display size (in device orientation), used to
+    // deduplicate flex-display resize requests.
+    struct sc_size last_requested_display_size;
+    sc_tick last_resize_request_tick;
+    bool transient_stretch;
+    sc_tick last_resize_event_tick;
+    bool hotspot_button_down;
+    bool hotspot_press_started_in_hotspot;
+    bool hotspot_dragged;
+    sc_tick hotspot_press_tick;
+    bool hotspot_drag_pending;
+    bool maximized_hotspot_press_pending;
+    sc_tick maximized_hotspot_press_tick;
+    float maximized_hotspot_press_x;
+    float maximized_hotspot_press_y;
 
     bool resize_pending; // resize requested while fullscreen or maximized
     // The content size the last time the window was not maximized or

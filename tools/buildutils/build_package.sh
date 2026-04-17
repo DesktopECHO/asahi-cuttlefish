@@ -144,8 +144,12 @@ function refresh_source_tarball_if_needed() {
   fi
 
   if [[ "${building_scrcpy}" == "true" ]]; then
-    # On aarch64, prefer a locally built scrcpy-server since the upstream
-    # prebuilt causes protocol issues with the SDL3 client on Asahi.
+    # Always refresh the packaged scrcpy-server before building the RPM so the
+    # source tarball cannot silently reuse a stale server APK from a prior run.
+    rm -f "${scrcpy_server_dest}"
+
+    # On aarch64, build the server locally. The upstream prebuilt causes
+    # protocol issues with the SDL3 client on Asahi.
     if [[ "$(uname -m)" == "aarch64" && -x "${scrcpy_server_build_helper}" ]]; then
       echo "Building scrcpy-server locally for aarch64"
       if BUILD_DIR="${REPO_DIR}/out/build-scrcpy-server" "${scrcpy_server_build_helper}"; then
@@ -153,6 +157,7 @@ function refresh_source_tarball_if_needed() {
       else
         if [[ "${ALLOW_SCRCPY_SERVER_PREBUILT_FALLBACK}" == "true" ]]; then
           echo "Local scrcpy-server build failed; falling back to the upstream prebuilt"
+          rm -f "${scrcpy_server_dest}"
         else
           >&2 echo "Local scrcpy-server build failed and fallback is disabled."
           >&2 echo "Set ALLOW_SCRCPY_SERVER_PREBUILT_FALLBACK=true to override."

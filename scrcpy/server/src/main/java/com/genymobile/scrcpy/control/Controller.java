@@ -85,8 +85,8 @@ public class Controller implements AsyncProcessor, VirtualDisplayListener {
     private final DeviceMessageSender sender;
     private final boolean clipboardAutosync;
     private final boolean powerOn;
-    private final boolean adaptivePrimaryDisplay;
-    private final int adaptivePrimaryDisplayDpi;
+    private final boolean flexDisplay;
+    private final int flexDisplayDpi;
 
     private final KeyCharacterMap charMap = KeyCharacterMap.load(KeyCharacterMap.VIRTUAL_KEYBOARD);
 
@@ -113,8 +113,8 @@ public class Controller implements AsyncProcessor, VirtualDisplayListener {
         this.cleanUp = cleanUp;
         this.clipboardAutosync = options.getClipboardAutosync();
         this.powerOn = options.getPowerOn();
-        this.adaptivePrimaryDisplay = options.getAdaptivePrimaryDisplay();
-        this.adaptivePrimaryDisplayDpi = options.getAdaptivePrimaryDisplayDpi();
+        this.flexDisplay = options.getFlexDisplay();
+        this.flexDisplayDpi = options.getFlexDisplayDpi();
         initPointers();
         sender = new DeviceMessageSender(controlChannel);
 
@@ -341,10 +341,10 @@ public class Controller implements AsyncProcessor, VirtualDisplayListener {
                 resetVideo();
                 break;
             case ControlMessage.TYPE_RESIZE_DISPLAY: {
-                int adaptiveDpi = adaptivePrimaryDisplay
-                        ? adaptivePrimaryDisplayDpi
+                int dpi = flexDisplay && displayId == 0
+                        ? flexDisplayDpi
                         : 0;
-                setDisplaySize(msg.getWidth(), msg.getHeight(), adaptiveDpi);
+                setDisplaySize(msg.getWidth(), msg.getHeight(), dpi);
                 break;
             }
             case ControlMessage.TYPE_CAMERA_SET_TORCH:
@@ -792,14 +792,31 @@ public class Controller implements AsyncProcessor, VirtualDisplayListener {
             Ln.i("Resize virtual display to " + width + "x" + height + "/" + dpi);
             nd.setDisplaySize(width, height, dpi);
         } else if (surfaceCapture instanceof ScreenCapture
-                && adaptivePrimaryDisplay && displayId == 0) {
-            Size requestedSize = new Size(width, height);
+                && flexDisplay && displayId == 0) {
+            // Many encoders require dimensions aligned to at least 8 pixels.
+            // Apply the same normalization before updating display 0 to avoid
+            // immediate size coercion by the encoder.
+            int alignedWidth = width & ~7;
+            int alignedHeight = height & ~7;
+            if (alignedWidth <= 0 || alignedHeight <= 0) {
+                Ln.w("Primary display resize ignored: invalid size " + width
+                        + "x" + height);
+                return;
+            }
+
+            if (alignedWidth != width || alignedHeight != height) {
+                Ln.v("Align primary display resize " + width + "x" + height
+                        + " -> " + alignedWidth + "x" + alignedHeight);
+            }
+
+            Size requestedSize = new Size(alignedWidth, alignedHeight);
             if (requestedSize.equals(lastPrimaryDisplaySizeRequest)
                     && dpi == lastPrimaryDisplayDpiRequest) {
                 return;
             }
 
-            Ln.i("Resize primary display to " + width + "x" + height + "/" + dpi);
+            Ln.i("Resize primary display to " + requestedSize.getWidth() + "x"
+                    + requestedSize.getHeight() + "/" + dpi);
             int requestedDpi = dpi != lastPrimaryDisplayDpiRequest ? dpi : 0;
             if (Device.setDisplaySizeAndDensity(displayId, requestedSize,
                     requestedDpi)) {

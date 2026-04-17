@@ -95,6 +95,7 @@ fetch_if_missing() {
 }
 
 resolve_java_tools
+echo "Preparing scrcpy-server build in ${BUILD_DIR}"
 fetch_if_missing "${PLATFORM_ZIP}" "${PLATFORM_ZIP_URL}"
 fetch_if_missing "${BUILD_TOOLS_ZIP}" "${BUILD_TOOLS_ZIP_URL}"
 
@@ -181,16 +182,19 @@ mapfile -t SRC_FILES < <(find \
     "$GEN_DIR" \
     -name '*.java' | sort)
 
+echo "Compiling scrcpy-server Java sources"
 "$JAVAC" -encoding UTF-8 \
     -bootclasspath "$ANDROID_JAR" \
     -cp "$LAMBDA_JAR:$GEN_DIR" \
     -d "$CLASSES_DIR" \
+    -Xlint:-options \
     -source 8 \
     -target 8 \
     "${SRC_FILES[@]}"
 
 mapfile -t CLASS_FILES < <(find "$CLASSES_DIR" -name '*.class' | sort)
 
+echo "Dexing compiled classes"
 "$JAVA" -cp "$D8_JAR" com.android.tools.r8.D8 \
     --lib "$ANDROID_JAR" \
     --min-api 21 \
@@ -199,5 +203,10 @@ mapfile -t CLASS_FILES < <(find "$CLASSES_DIR" -name '*.class' | sort)
 
 mv "$BUILD_DIR/classes.zip" "$SERVER_BINARY"
 
-echo "Built $SERVER_BINARY"
-"$JAR" tf "$SERVER_BINARY"
+if "$JAR" tf "$SERVER_BINARY" | grep -qx 'classes.dex'; then
+    echo "Built scrcpy-server: $SERVER_BINARY"
+    echo "Verified server archive contains classes.dex"
+else
+    echo "Built scrcpy-server is missing classes.dex: $SERVER_BINARY" >&2
+    exit 1
+fi

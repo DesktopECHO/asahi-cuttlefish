@@ -1,4 +1,4 @@
-Name:           cuttlefish-base
+Name:           ika-base
 Version:        1.50.0
 Release:        4%{?dist}
 Summary:        Cuttlefish Android Virtual Device host packages for Fedora
@@ -75,44 +75,55 @@ Requires(postun): /usr/bin/systemctl
 Contains the base host-side binaries, networking helpers, and system services
 required to boot and manage Cuttlefish Android Virtual Devices on Fedora.
 
-%package -n cuttlefish-common
-Summary:        Compatibility metapackage for Cuttlefish host packages
-Requires:       cuttlefish-base = %{version}-%{release}
-Requires:       cuttlefish-defaults = %{version}-%{release}
-Requires:       cuttlefish-user = %{version}-%{release}
+Provides:       cuttlefish-base = %{version}-%{release}
+Obsoletes:      cuttlefish-base < %{version}-%{release}
 
-%description -n cuttlefish-common
+%package -n ika-common
+Summary:        Compatibility metapackage for Cuttlefish host packages
+Requires:       ika-base = %{version}-%{release}
+Requires:       ika-defaults = %{version}-%{release}
+Requires:       ika-user = %{version}-%{release}
+Provides:       cuttlefish-common = %{version}-%{release}
+Obsoletes:      cuttlefish-common < %{version}-%{release}
+
+%description -n ika-common
 Compatibility metapackage ensuring the primary host-side Cuttlefish packages
 are installed together.
 
-%package -n cuttlefish-integration
+%package -n ika-integration
 Summary:        Cloud integration utilities for Cuttlefish
-Requires:       cuttlefish-base = %{version}-%{release}
+Requires:       ika-base = %{version}-%{release}
 %ifarch aarch64
 Requires:       qemu-system-aarch64-core
 %endif
 %ifarch x86_64
 Requires:       qemu-system-x86-core
 %endif
+Provides:       cuttlefish-integration = %{version}-%{release}
+Obsoletes:      cuttlefish-integration < %{version}-%{release}
 
-%description -n cuttlefish-integration
+%description -n ika-integration
 Contains cloud-oriented integration helpers and metadata-driven defaults for
 Cuttlefish deployments.
 
-%package -n cuttlefish-defaults
+%package -n ika-defaults
 Summary:        Optional Cuttlefish defaults override file
-Requires:       cuttlefish-base = %{version}-%{release}
-Requires:       cuttlefish-integration = %{version}-%{release}
+Requires:       ika-base = %{version}-%{release}
+Requires:       ika-integration = %{version}-%{release}
+Provides:       cuttlefish-defaults = %{version}-%{release}
+Obsoletes:      cuttlefish-defaults < %{version}-%{release}
 
-%description -n cuttlefish-defaults
+%description -n ika-defaults
 Provides an optional override file for Cuttlefish defaults in a standard Fedora
 configuration path.
 
-%package -n cuttlefish-metrics
+%package -n ika-metrics
 Summary:        Metrics transmission support for Cuttlefish
-Requires:       cuttlefish-base = %{version}-%{release}
+Requires:       ika-base = %{version}-%{release}
+Provides:       cuttlefish-metrics = %{version}-%{release}
+Obsoletes:      cuttlefish-metrics < %{version}-%{release}
 
-%description -n cuttlefish-metrics
+%description -n ika-metrics
 Contains the metrics transmitter binary used by Cuttlefish.
 
 %prep
@@ -151,7 +162,8 @@ retry_count=0
 max_retries=9
 retry_delay=60
 while true; do
-  if DISABLE_BAZEL_WRAPPER=yes USE_BAZEL_VERSION=8.5.1 \
+  if ./tools/ensure_crosvm_git_mirror.sh && \
+    DISABLE_BAZEL_WRAPPER=yes USE_BAZEL_VERSION=8.5.1 \
     bazel --output_base="$BAZEL_OUTPUT_BASE" build -c opt \
     --repository_cache="$BAZEL_REPOSITORY_CACHE" \
     --disk_cache="$BAZEL_DISK_CACHE" \
@@ -290,7 +302,7 @@ if systemctl is-active --quiet firewalld 2>/dev/null; then
   firewall-cmd --reload >/dev/null 2>&1 || :
 fi
 
-%post -n cuttlefish-defaults
+%post -n ika-defaults
 systemctl daemon-reload >/dev/null 2>&1 || :
 
 %preun
@@ -302,7 +314,7 @@ if [ $1 -eq 0 ]; then
   fi
 fi
 
-%preun -n cuttlefish-defaults
+%preun -n ika-defaults
 if [ $1 -eq 0 ]; then
   systemctl disable --now cuttlefish-defaults.service >/dev/null 2>&1 || :
 fi
@@ -310,7 +322,7 @@ fi
 %postun
 systemctl daemon-reload >/dev/null 2>&1 || :
 
-%postun -n cuttlefish-defaults
+%postun -n ika-defaults
 systemctl daemon-reload >/dev/null 2>&1 || :
 
 %files
@@ -329,10 +341,10 @@ systemctl daemon-reload >/dev/null 2>&1 || :
 /usr/libexec/cuttlefish/cuttlefish-host-resources
 /usr/libexec/cuttlefish/cuttlefish-add-user-to-groups
 
-%files -n cuttlefish-common
+%files -n ika-common
 %license LICENSE
 
-%files -n cuttlefish-integration
+%files -n ika-integration
 %license LICENSE
 /usr/bin/cf_defaults
 /etc/modprobe.d/cuttlefish-integration.conf
@@ -341,14 +353,14 @@ systemctl daemon-reload >/dev/null 2>&1 || :
 /etc/sysconfig/instance_configs.cfg.template
 /usr/lib/udev/rules.d/71-cuttlefish-integration.rules
 
-%files -n cuttlefish-defaults
+%files -n ika-defaults
 %license LICENSE
 %config(noreplace) /etc/cuttlefish-common/cf_defaults
 /etc/sysconfig/cuttlefish-integration
 /usr/lib/systemd/system/cuttlefish-defaults.service
 /usr/libexec/cuttlefish/cuttlefish-defaults
 
-%files -n cuttlefish-metrics
+%files -n ika-metrics
 %license LICENSE
 /usr/lib/cuttlefish-metrics
 

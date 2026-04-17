@@ -58,7 +58,6 @@ arguments=(
     {-n,--no-control}'[Disable device control \(mirror the device in read only\)]'
     {-N,--no-playback}'[Disable video and audio playback]'
     '--new-display=[Create a new display]'
-    '--adaptive-primary-display=[Resize primary display with optional fixed DPI]'
     '--no-audio[Disable audio forwarding]'
     '--no-audio-playback[Disable audio playback]'
     '--no-cleanup[Disable device cleanup actions on exit]'
@@ -114,7 +113,7 @@ arguments=(
     '--window-y=[Set the initial window vertical position]'
     '--window-width=[Set the initial window width]'
     '--window-height=[Set the initial window height]'
-    {-x,--flex-display}'[Continuously resize the virtual display to match the window]'
+    {-x,--flex-display}'[Continuously resize display to match the window (new display or primary)]'
 )
 
 _arguments -s $arguments

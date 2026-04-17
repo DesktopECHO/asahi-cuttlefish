@@ -1,4 +1,4 @@
-Name:           cuttlefish-lineageos
+Name:           ika-lineageos
 Version:        20260401
 Release:        4%{?dist}
 Summary:        LineageOS for Cuttlefish host
@@ -11,11 +11,14 @@ ExclusiveArch:  aarch64
 %undefine _debugsource_packages
 AutoReqProv:    no
 
-Requires:       cuttlefish-base
+Requires:       ika-base
 
 %description
 Contains LineageOS 23 for use by this Cuttlefish workflow, installed under
 /usr/share/cuttlefish-common/lineageos.
+
+Provides:       cuttlefish-lineageos = %{version}-%{release}
+Obsoletes:      cuttlefish-lineageos < %{version}-%{release}
 
 %prep
 %autosetup -n android-cuttlefish-1.50.0
@@ -25,8 +28,10 @@ rm -rf %{buildroot}
 
 mkdir -p %{buildroot}/usr/share/cuttlefish-common
 cp -a lineageos %{buildroot}/usr/share/cuttlefish-common/
+find %{buildroot}/usr/share/cuttlefish-common/lineageos -type d ! -type l -exec chmod 755 '{}' +
 find %{buildroot}/usr/share/cuttlefish-common/lineageos ! -type l -exec chmod u+w '{}' +
 find %{buildroot}/usr/share/cuttlefish-common/lineageos ! -type l -exec chmod g=u '{}' +
+find %{buildroot}/usr/share/cuttlefish-common/lineageos -type d ! -type l -exec chmod a+rx '{}' +
 
 %files
 %license LICENSE

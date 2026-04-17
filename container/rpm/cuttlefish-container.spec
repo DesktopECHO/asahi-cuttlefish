@@ -1,4 +1,4 @@
-Name:           cuttlefish-container
+Name:           ika-container
 Version:        1.50.0
 Release:        4%{?dist}
 Summary:        Container-oriented Cuttlefish tools for Fedora
@@ -14,15 +14,20 @@ BuildRequires:  systemd-rpm-macros
 %description
 Builds the podcvd container launcher package for Fedora.
 
-%package -n cuttlefish-podcvd
+Provides:       cuttlefish-container = %{version}-%{release}
+Obsoletes:      cuttlefish-container < %{version}-%{release}
+
+%package -n ika-podcvd
 Summary:        Rootless podman launcher for Cuttlefish containers
 Requires:       android-tools
 Requires:       podman
 Requires(post): /usr/bin/systemctl
 Requires(preun): /usr/bin/systemctl
 Requires(postun): /usr/bin/systemctl
+Provides:       cuttlefish-podcvd = %{version}-%{release}
+Obsoletes:      cuttlefish-podcvd < %{version}-%{release}
 
-%description -n cuttlefish-podcvd
+%description -n ika-podcvd
 Contains the podcvd binary and the networking preparation service used to run
 Cuttlefish instances inside rootless containers.
 
@@ -43,19 +48,19 @@ install -Dpm0644 container/rpm/cuttlefish-podcvd.service %{buildroot}/usr/lib/sy
 install -Dpm0755 container/rpm/cuttlefish-podcvd.sh %{buildroot}/usr/libexec/cuttlefish/cuttlefish-podcvd
 install -Dpm0644 container/rpm/cuttlefish-podcvd.sysconfig %{buildroot}/etc/sysconfig/cuttlefish-podcvd
 
-%post -n cuttlefish-podcvd
+%post -n ika-podcvd
 systemctl daemon-reload >/dev/null 2>&1 || :
 systemctl enable --now cuttlefish-podcvd.service >/dev/null 2>&1 || :
 
-%preun -n cuttlefish-podcvd
+%preun -n ika-podcvd
 if [ $1 -eq 0 ]; then
   systemctl disable --now cuttlefish-podcvd.service >/dev/null 2>&1 || :
 fi
 
-%postun -n cuttlefish-podcvd
+%postun -n ika-podcvd
 systemctl daemon-reload >/dev/null 2>&1 || :
 
-%files -n cuttlefish-podcvd
+%files -n ika-podcvd
 %license LICENSE
 /etc/sysconfig/cuttlefish-podcvd
 /usr/lib/cuttlefish-common/bin/cuttlefish-podcvd-prerequisites.sh
