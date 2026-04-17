@@ -722,6 +722,7 @@ start_scrcpy_with_retries() {
     --video-bit-rate=24M
     --audio-codec=raw
     --mouse-bind=+hsn:b+++
+    --adaptive-primary-display=/120
   )
 
   if [[ -d "${SCRCPY_ICON_DIR_DEFAULT}" ]]; then

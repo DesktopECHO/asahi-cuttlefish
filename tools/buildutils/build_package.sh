@@ -79,6 +79,7 @@ readonly SOURCE_TARBALL="${RPMBUILD_TOPDIR}/SOURCES/${TAR_BASENAME}.tar.gz"
 readonly SOURCE_MANIFEST="${RPMBUILD_TOPDIR}/SOURCES/${TAR_BASENAME}.manifest"
 readonly SOURCE_STAGING_DIR="${RPMBUILD_TOPDIR}/SOURCES/${TAR_BASENAME}"
 declare -a build_workdirs=()
+readonly ALLOW_SCRCPY_SERVER_PREBUILT_FALLBACK="${ALLOW_SCRCPY_SERVER_PREBUILT_FALLBACK:-false}"
 
 function normalize_spec_name() {
   local spec_name="$1"
@@ -143,15 +144,20 @@ function refresh_source_tarball_if_needed() {
   fi
 
   if [[ "${building_scrcpy}" == "true" ]]; then
-    # On aarch64, prefer a locally built scrcpy-server since the upstream prebuilt
-    # causes protocol issues with the SDL3 client on Asahi. Fall back to the
-    # upstream release artifact if the local toolchain is not available.
+    # On aarch64, prefer a locally built scrcpy-server since the upstream
+    # prebuilt causes protocol issues with the SDL3 client on Asahi.
     if [[ "$(uname -m)" == "aarch64" && -x "${scrcpy_server_build_helper}" ]]; then
       echo "Building scrcpy-server locally for aarch64"
       if BUILD_DIR="${REPO_DIR}/out/build-scrcpy-server" "${scrcpy_server_build_helper}"; then
         install -m 0644 "${local_scrcpy_server}" "${scrcpy_server_dest}"
       else
-        echo "Local scrcpy-server build failed; falling back to the upstream prebuilt"
+        if [[ "${ALLOW_SCRCPY_SERVER_PREBUILT_FALLBACK}" == "true" ]]; then
+          echo "Local scrcpy-server build failed; falling back to the upstream prebuilt"
+        else
+          >&2 echo "Local scrcpy-server build failed and fallback is disabled."
+          >&2 echo "Set ALLOW_SCRCPY_SERVER_PREBUILT_FALLBACK=true to override."
+          return 1
+        fi
       fi
     fi
 

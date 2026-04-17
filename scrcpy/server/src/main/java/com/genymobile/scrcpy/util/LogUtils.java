@@ -23,7 +23,6 @@ import android.media.MediaCodecList;
 import android.os.Build;
 import android.util.Range;
 
-import java.text.DecimalFormat;
 import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
@@ -165,24 +164,12 @@ public final class LogUtils {
                         // Capture frame rates for low-FPS mode are the same for every resolution
                         Range<Integer>[] lowFpsRanges = characteristics.get(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES);
                         if (lowFpsRanges != null) {
-                            String uniqueLowFps = getFormattedUniqueSet(lowFpsRanges);
+                            SortedSet<Integer> uniqueLowFps = getUniqueSet(lowFpsRanges);
                             builder.append(", fps=").append(uniqueLowFps);
                         }
                     } catch (Exception e) {
                         // Some devices may provide invalid ranges, causing an IllegalArgumentException "lower must be less than or equal to upper"
                         Ln.w("Could not get available frame rates for camera " + id, e);
-                    }
-
-                    if (Build.VERSION.SDK_INT >= AndroidVersions.API_30_ANDROID_11) {
-                        try {
-                            Range<Float> zoomRange = characteristics.get(CameraCharacteristics.CONTROL_ZOOM_RATIO_RANGE);
-                            if (zoomRange != null) {
-                                String zoom = getFormattedZoomRange(zoomRange);
-                                builder.append(", zoom-range=").append(zoom);
-                            }
-                        } catch (Exception e) {
-                            Ln.w("Could not get available zoom ranges for camera " + id, e);
-                        }
                     }
 
                     builder.append(')');
@@ -204,7 +191,7 @@ public final class LogUtils {
                             builder.append("\n      High speed capture (--camera-high-speed):");
                             for (android.util.Size size : highSpeedSizes) {
                                 Range<Integer>[] highFpsRanges = configs.getHighSpeedVideoFpsRanges();
-                                String uniqueHighFps = getFormattedUniqueSet(highFpsRanges);
+                                SortedSet<Integer> uniqueHighFps = getUniqueSet(highFpsRanges);
                                 builder.append("\n        - ").append(size.getWidth()).append("x").append(size.getHeight());
                                 builder.append(" (fps=").append(uniqueHighFps).append(')');
                             }
@@ -218,31 +205,14 @@ public final class LogUtils {
         return builder.toString();
     }
 
-    private static String getFormattedUniqueSet(Range<Integer>[] ranges) {
+    private static SortedSet<Integer> getUniqueSet(Range<Integer>[] ranges) {
         SortedSet<Integer> set = new TreeSet<>();
         for (Range<Integer> range : ranges) {
             set.add(range.getUpper());
         }
-
-        StringBuilder builder = new StringBuilder("{");
-        boolean first = true;
-        for (Integer i : set) {
-            if (!first) {
-                builder.append(", ");
-            } else {
-                first = false;
-            }
-            builder.append(i);
-        }
-        builder.append("}");
-
-        return builder.toString();
+        return set;
     }
 
-    private static String getFormattedZoomRange(Range<Float> range) {
-        DecimalFormat format = new DecimalFormat("#.##");
-        return "[" + format.format(range.getLower()) + ", " + format.format(range.getUpper()) + "]";
-    }
 
     public static String buildAppListMessage() {
         List<DeviceApp> apps = Device.listApps();

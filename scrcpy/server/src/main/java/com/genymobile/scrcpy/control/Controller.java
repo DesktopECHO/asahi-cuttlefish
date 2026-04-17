@@ -13,8 +13,9 @@ import com.genymobile.scrcpy.device.Size;
 import com.genymobile.scrcpy.util.Ln;
 import com.genymobile.scrcpy.util.LogUtils;
 import com.genymobile.scrcpy.video.CameraCapture;
+import com.genymobile.scrcpy.video.NewDisplayCapture;
+import com.genymobile.scrcpy.video.ScreenCapture;
 import com.genymobile.scrcpy.video.SurfaceCapture;
-import com.genymobile.scrcpy.video.VideoSource;
 import com.genymobile.scrcpy.video.VirtualDisplayListener;
 import com.genymobile.scrcpy.wrappers.ClipboardManager;
 import com.genymobile.scrcpy.wrappers.InputManager;
@@ -77,7 +78,6 @@ public class Controller implements AsyncProcessor, VirtualDisplayListener {
 
     private UhidManager uhidManager;
 
-    private final boolean camera;
     private final int displayId;
     private final boolean supportsInputEvents;
     private final ControlChannel controlChannel;
@@ -86,6 +86,7 @@ public class Controller implements AsyncProcessor, VirtualDisplayListener {
     private final boolean clipboardAutosync;
     private final boolean powerOn;
     private final boolean adaptivePrimaryDisplay;
+    private final int adaptivePrimaryDisplayDpi;
 
     private final KeyCharacterMap charMap = KeyCharacterMap.load(KeyCharacterMap.VIRTUAL_KEYBOARD);
 
@@ -100,32 +101,20 @@ public class Controller implements AsyncProcessor, VirtualDisplayListener {
     private final MotionEvent.PointerCoords[] pointerCoords = new MotionEvent.PointerCoords[PointersState.MAX_POINTERS];
 
     private boolean keepDisplayPowerOff;
+
+    // Used for resetting video encoding on RESET_VIDEO message
+    private SurfaceCapture surfaceCapture;
     private Size lastPrimaryDisplaySizeRequest;
     private int lastPrimaryDisplayDpiRequest;
 
-    // Used for resetting video encoding on RESET_VIDEO message or for sending camera controls
-    private SurfaceCapture surfaceCapture;
-
     public Controller(ControlChannel controlChannel, CleanUp cleanUp, Options options) {
-        this.camera = options.getVideoSource() == VideoSource.CAMERA;
+        this.displayId = options.getDisplayId();
         this.controlChannel = controlChannel;
         this.cleanUp = cleanUp;
-        this.adaptivePrimaryDisplay = options.getAdaptivePrimaryDisplay();
-
-        if (this.camera) {
-            // Unused for camera
-            this.displayId = Device.DISPLAY_ID_NONE;
-            this.supportsInputEvents = false;
-            this.sender = null;
-            this.clipboardAutosync = false;
-            this.powerOn = false;
-            return;
-        }
-
-        this.displayId = options.getDisplayId();
-
         this.clipboardAutosync = options.getClipboardAutosync();
         this.powerOn = options.getPowerOn();
+        this.adaptivePrimaryDisplay = options.getAdaptivePrimaryDisplay();
+        this.adaptivePrimaryDisplayDpi = options.getAdaptivePrimaryDisplayDpi();
         initPointers();
         sender = new DeviceMessageSender(controlChannel);
 
@@ -221,7 +210,7 @@ public class Controller implements AsyncProcessor, VirtualDisplayListener {
 
     private void control() throws IOException {
         // on start, power on the device
-        if (!camera && powerOn && displayId == 0 && !Device.isScreenOn(displayId)) {
+        if (powerOn && displayId == 0 && !Device.isScreenOn(displayId)) {
             Device.pressReleaseKeycode(KeyEvent.KEYCODE_POWER, displayId, Device.INJECT_MODE_ASYNC);
 
             // dirty hack
@@ -256,9 +245,7 @@ public class Controller implements AsyncProcessor, VirtualDisplayListener {
             }
         }, "control-recv");
         thread.start();
-        if (sender != null) {
-            sender.start();
-        }
+        sender.start();
     }
 
     @Override
@@ -266,9 +253,7 @@ public class Controller implements AsyncProcessor, VirtualDisplayListener {
         if (thread != null) {
             thread.interrupt();
         }
-        if (sender != null) {
-            sender.stop();
-        }
+        sender.stop();
     }
 
     @Override
@@ -276,129 +261,112 @@ public class Controller implements AsyncProcessor, VirtualDisplayListener {
         if (thread != null) {
             thread.join();
         }
-        if (sender != null) {
-            sender.join();
-        }
+        sender.join();
     }
 
     private boolean handleEvent() throws IOException {
         ControlMessage msg;
         try {
             msg = controlChannel.recv();
-        } catch (ControlProtocolException e) {
-            Ln.e("Control protocol error", e);
-            return false;
         } catch (IOException e) {
             // this is expected on close
             return false;
         }
 
-        int type = msg.getType();
-
-        // Events for all sources (display or camera)
-        switch (type) {
+        switch (msg.getType()) {
+            case ControlMessage.TYPE_INJECT_KEYCODE:
+                if (supportsInputEvents) {
+                    injectKeycode(msg.getAction(), msg.getKeycode(), msg.getRepeat(), msg.getMetaState());
+                }
+                break;
+            case ControlMessage.TYPE_INJECT_TEXT:
+                if (supportsInputEvents) {
+                    injectText(msg.getText());
+                }
+                break;
+            case ControlMessage.TYPE_INJECT_TOUCH_EVENT:
+                if (supportsInputEvents) {
+                    injectTouch(msg.getAction(), msg.getPointerId(), msg.getPosition(), msg.getPressure(), msg.getActionButton(), msg.getButtons());
+                }
+                break;
+            case ControlMessage.TYPE_INJECT_SCROLL_EVENT:
+                if (supportsInputEvents) {
+                    injectScroll(msg.getPosition(), msg.getHScroll(), msg.getVScroll(), msg.getButtons());
+                }
+                break;
+            case ControlMessage.TYPE_BACK_OR_SCREEN_ON:
+                if (supportsInputEvents) {
+                    pressBackOrTurnScreenOn(msg.getAction());
+                }
+                break;
+            case ControlMessage.TYPE_EXPAND_NOTIFICATION_PANEL:
+                Device.expandNotificationPanel();
+                break;
+            case ControlMessage.TYPE_EXPAND_SETTINGS_PANEL:
+                Device.expandSettingsPanel();
+                break;
+            case ControlMessage.TYPE_COLLAPSE_PANELS:
+                Device.collapsePanels();
+                break;
+            case ControlMessage.TYPE_GET_CLIPBOARD:
+                getClipboard(msg.getCopyKey());
+                break;
+            case ControlMessage.TYPE_SET_CLIPBOARD:
+                setClipboard(msg.getText(), msg.getPaste(), msg.getSequence());
+                break;
+            case ControlMessage.TYPE_SET_DISPLAY_POWER:
+                if (supportsInputEvents) {
+                    setDisplayPower(msg.getOn());
+                }
+                break;
+            case ControlMessage.TYPE_ROTATE_DEVICE:
+                Device.rotateDevice(getActionDisplayId());
+                break;
+            case ControlMessage.TYPE_UHID_CREATE:
+                getUhidManager().open(msg.getId(), msg.getVendorId(), msg.getProductId(), msg.getText(), msg.getData());
+                break;
+            case ControlMessage.TYPE_UHID_INPUT:
+                getUhidManager().writeInput(msg.getId(), msg.getData());
+                break;
+            case ControlMessage.TYPE_UHID_DESTROY:
+                getUhidManager().close(msg.getId());
+                break;
+            case ControlMessage.TYPE_OPEN_HARD_KEYBOARD_SETTINGS:
+                openHardKeyboardSettings();
+                break;
+            case ControlMessage.TYPE_START_APP:
+                startAppAsync(msg.getText());
+                break;
             case ControlMessage.TYPE_RESET_VIDEO:
                 resetVideo();
-                return true;
-            case ControlMessage.TYPE_SET_DISPLAY_SIZE:
-                setDisplaySize(msg.getDisplayWidth(), msg.getDisplayHeight(),
-                        msg.getDisplayDpi());
-                return true;
+                break;
+            case ControlMessage.TYPE_RESIZE_DISPLAY: {
+                int adaptiveDpi = adaptivePrimaryDisplay
+                        ? adaptivePrimaryDisplayDpi
+                        : 0;
+                setDisplaySize(msg.getWidth(), msg.getHeight(), adaptiveDpi);
+                break;
+            }
+            case ControlMessage.TYPE_CAMERA_SET_TORCH:
+                if (surfaceCapture instanceof CameraCapture) {
+                    ((CameraCapture) surfaceCapture).setTorchEnabled(msg.getOn());
+                }
+                break;
+            case ControlMessage.TYPE_CAMERA_ZOOM_IN:
+                if (surfaceCapture instanceof CameraCapture) {
+                    ((CameraCapture) surfaceCapture).zoomIn();
+                }
+                break;
+            case ControlMessage.TYPE_CAMERA_ZOOM_OUT:
+                if (surfaceCapture instanceof CameraCapture) {
+                    ((CameraCapture) surfaceCapture).zoomOut();
+                }
+                break;
             default:
-                // fall through
+                // do nothing
         }
 
-        if (!camera) {
-            switch (type) {
-                case ControlMessage.TYPE_INJECT_KEYCODE:
-                    if (supportsInputEvents) {
-                        injectKeycode(msg.getAction(), msg.getKeycode(), msg.getRepeat(), msg.getMetaState());
-                    }
-                    return true;
-                case ControlMessage.TYPE_INJECT_TEXT:
-                    if (supportsInputEvents) {
-                        injectText(msg.getText());
-                    }
-                    return true;
-                case ControlMessage.TYPE_INJECT_TOUCH_EVENT:
-                    if (supportsInputEvents) {
-                        injectTouch(
-                                msg.getAction(), msg.getPointerId(), msg.getPosition(), msg.getPressure(), msg.getActionButton(), msg.getButtons());
-                    }
-                    return true;
-                case ControlMessage.TYPE_INJECT_SCROLL_EVENT:
-                    if (supportsInputEvents) {
-                        injectScroll(msg.getPosition(), msg.getHScroll(), msg.getVScroll(), msg.getButtons());
-                    }
-                    return true;
-                case ControlMessage.TYPE_BACK_OR_SCREEN_ON:
-                    if (supportsInputEvents) {
-                        pressBackOrTurnScreenOn(msg.getAction());
-                    }
-                    return true;
-                case ControlMessage.TYPE_EXPAND_NOTIFICATION_PANEL:
-                    Device.expandNotificationPanel();
-                    return true;
-                case ControlMessage.TYPE_EXPAND_SETTINGS_PANEL:
-                    Device.expandSettingsPanel();
-                    return true;
-                case ControlMessage.TYPE_COLLAPSE_PANELS:
-                    Device.collapsePanels();
-                    return true;
-                case ControlMessage.TYPE_GET_CLIPBOARD:
-                    getClipboard(msg.getCopyKey());
-                    return true;
-                case ControlMessage.TYPE_SET_CLIPBOARD:
-                    setClipboard(msg.getText(), msg.getPaste(), msg.getSequence());
-                    return true;
-                case ControlMessage.TYPE_SET_DISPLAY_POWER:
-                    if (supportsInputEvents) {
-                        setDisplayPower(msg.getOn());
-                    }
-                    return true;
-                case ControlMessage.TYPE_ROTATE_DEVICE:
-                    int actionDisplayId = getActionDisplayId();
-                    if (actionDisplayId != Device.DISPLAY_ID_NONE) {
-                        Device.rotateDevice(actionDisplayId);
-                    }
-                    return true;
-                case ControlMessage.TYPE_UHID_CREATE:
-                    getUhidManager().open(msg.getId(), msg.getVendorId(), msg.getProductId(), msg.getText(), msg.getData());
-                    return true;
-                case ControlMessage.TYPE_UHID_INPUT:
-                    getUhidManager().writeInput(msg.getId(), msg.getData());
-                    return true;
-                case ControlMessage.TYPE_UHID_DESTROY:
-                    getUhidManager().close(msg.getId());
-                    return true;
-                case ControlMessage.TYPE_OPEN_HARD_KEYBOARD_SETTINGS:
-                    openHardKeyboardSettings();
-                    return true;
-                case ControlMessage.TYPE_START_APP:
-                    startAppAsync(msg.getText());
-                    return true;
-                default:
-                    // fall through
-            }
-        } else {
-            assert surfaceCapture instanceof CameraCapture;
-            CameraCapture cameraCapture = (CameraCapture) surfaceCapture;
-            switch (type) {
-                case ControlMessage.TYPE_CAMERA_SET_TORCH:
-                    cameraCapture.setTorchEnabled(msg.getOn());
-                    return true;
-                case ControlMessage.TYPE_CAMERA_ZOOM_IN:
-                    cameraCapture.zoomIn();
-                    return true;
-                case ControlMessage.TYPE_CAMERA_ZOOM_OUT:
-                    cameraCapture.zoomOut();
-                    return true;
-                default:
-                    // fall through
-            }
-        }
-
-        throw new AssertionError("Unexpected message type: " + type);
+        return true;
     }
 
     private boolean injectKeycode(int action, int keycode, int repeat, int metaState) {
@@ -418,11 +386,9 @@ public class Controller implements AsyncProcessor, VirtualDisplayListener {
         }
 
         int actionDisplayId = getActionDisplayId();
-        if (actionDisplayId != Device.DISPLAY_ID_NONE) {
-            for (KeyEvent event : events) {
-                if (!Device.injectEvent(event, actionDisplayId, Device.INJECT_MODE_ASYNC)) {
-                    return false;
-                }
+        for (KeyEvent event : events) {
+            if (!Device.injectEvent(event, actionDisplayId, Device.INJECT_MODE_ASYNC)) {
+                return false;
             }
         }
         return true;
@@ -624,7 +590,7 @@ public class Controller implements AsyncProcessor, VirtualDisplayListener {
         // Screen is off
         // Only press POWER on ACTION_DOWN
         if (action != KeyEvent.ACTION_DOWN) {
-            // do nothing
+            // do nothing,
             return true;
         }
 
@@ -683,19 +649,11 @@ public class Controller implements AsyncProcessor, VirtualDisplayListener {
     }
 
     private boolean injectKeyEvent(int action, int keyCode, int repeat, int metaState, int injectMode) {
-        int actionDisplayId = getActionDisplayId();
-        if (actionDisplayId == Device.DISPLAY_ID_NONE) {
-            return false;
-        }
-        return Device.injectKeyEvent(action, keyCode, repeat, metaState, actionDisplayId, injectMode);
+        return Device.injectKeyEvent(action, keyCode, repeat, metaState, getActionDisplayId(), injectMode);
     }
 
     private boolean pressReleaseKeycode(int keyCode, int injectMode) {
-        int actionDisplayId = getActionDisplayId();
-        if (actionDisplayId == Device.DISPLAY_ID_NONE) {
-            return false;
-        }
-        return Device.pressReleaseKeycode(keyCode, actionDisplayId, injectMode);
+        return Device.pressReleaseKeycode(keyCode, getActionDisplayId(), injectMode);
     }
 
     private int getActionDisplayId() {
@@ -707,7 +665,8 @@ public class Controller implements AsyncProcessor, VirtualDisplayListener {
         // Virtual display created by --new-display, use the virtualDisplayId
         DisplayData data = displayData.get();
         if (data == null) {
-            return Device.DISPLAY_ID_NONE;
+            // If no virtual display id is initialized yet, use the main display id
+            return 0;
         }
 
         return data.virtualDisplayId;
@@ -823,17 +782,16 @@ public class Controller implements AsyncProcessor, VirtualDisplayListener {
     private void resetVideo() {
         if (surfaceCapture != null) {
             Ln.i("Video capture reset");
-            surfaceCapture.invalidate();
+            surfaceCapture.requestInvalidate();
         }
     }
 
     private void setDisplaySize(int width, int height, int dpi) {
-        if (surfaceCapture instanceof com.genymobile.scrcpy.video.NewDisplayCapture) {
-            com.genymobile.scrcpy.video.NewDisplayCapture nd =
-                    (com.genymobile.scrcpy.video.NewDisplayCapture) surfaceCapture;
+        if (surfaceCapture instanceof NewDisplayCapture) {
+            NewDisplayCapture nd = (NewDisplayCapture) surfaceCapture;
             Ln.i("Resize virtual display to " + width + "x" + height + "/" + dpi);
             nd.setDisplaySize(width, height, dpi);
-        } else if (surfaceCapture instanceof com.genymobile.scrcpy.video.ScreenCapture
+        } else if (surfaceCapture instanceof ScreenCapture
                 && adaptivePrimaryDisplay && displayId == 0) {
             Size requestedSize = new Size(width, height);
             if (requestedSize.equals(lastPrimaryDisplaySizeRequest)

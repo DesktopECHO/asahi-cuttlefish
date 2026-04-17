@@ -43,10 +43,10 @@ enum sc_control_msg_type {
     SC_CONTROL_MSG_TYPE_OPEN_HARD_KEYBOARD_SETTINGS,
     SC_CONTROL_MSG_TYPE_START_APP,
     SC_CONTROL_MSG_TYPE_RESET_VIDEO,
-    SC_CONTROL_MSG_TYPE_SET_DISPLAY_SIZE,
     SC_CONTROL_MSG_TYPE_CAMERA_SET_TORCH,
     SC_CONTROL_MSG_TYPE_CAMERA_ZOOM_IN,
     SC_CONTROL_MSG_TYPE_CAMERA_ZOOM_OUT,
+    SC_CONTROL_MSG_TYPE_RESIZE_DISPLAY,
 };
 
 enum sc_copy_key {
@@ -116,13 +116,12 @@ struct sc_control_msg {
             char *name;
         } start_app;
         struct {
-            uint16_t width;
-            uint16_t height;
-            uint16_t dpi;
-        } set_display_size;
-        struct {
             bool on;
         } camera_set_torch;
+        struct {
+            uint16_t width;
+            uint16_t height;
+        } resize_display;
     };
 };
 

@@ -182,14 +182,13 @@ sc_control_msg_serialize(const struct sc_control_msg *msg, uint8_t *buf) {
             size_t len = write_string_tiny(&buf[1], msg->start_app.name, 255);
             return 1 + len;
         }
-        case SC_CONTROL_MSG_TYPE_SET_DISPLAY_SIZE:
-            sc_write16be(&buf[1], msg->set_display_size.width);
-            sc_write16be(&buf[3], msg->set_display_size.height);
-            sc_write16be(&buf[5], msg->set_display_size.dpi);
-            return 7;
         case SC_CONTROL_MSG_TYPE_CAMERA_SET_TORCH:
             buf[1] = msg->camera_set_torch.on ? 1 : 0;
             return 2;
+        case SC_CONTROL_MSG_TYPE_RESIZE_DISPLAY:
+            sc_write16be(&buf[1], msg->resize_display.width);
+            sc_write16be(&buf[3], msg->resize_display.height);
+            return 5;
         case SC_CONTROL_MSG_TYPE_EXPAND_NOTIFICATION_PANEL:
         case SC_CONTROL_MSG_TYPE_EXPAND_SETTINGS_PANEL:
         case SC_CONTROL_MSG_TYPE_COLLAPSE_PANELS:
@@ -278,6 +277,10 @@ sc_control_msg_log(const struct sc_control_msg *msg) {
             LOG_CMSG("display power %s",
                      msg->set_display_power.on ? "on" : "off");
             break;
+        case SC_CONTROL_MSG_TYPE_RESIZE_DISPLAY:
+            LOG_CMSG("resize display %" PRIu16 "x%" PRIu16,
+                     msg->resize_display.width, msg->resize_display.height);
+            break;
         case SC_CONTROL_MSG_TYPE_EXPAND_NOTIFICATION_PANEL:
             LOG_CMSG("expand notification panel");
             break;
@@ -327,12 +330,6 @@ sc_control_msg_log(const struct sc_control_msg *msg) {
             break;
         case SC_CONTROL_MSG_TYPE_RESET_VIDEO:
             LOG_CMSG("reset video");
-            break;
-        case SC_CONTROL_MSG_TYPE_SET_DISPLAY_SIZE:
-            LOG_CMSG("set display size %ux%u/%u",
-                     msg->set_display_size.width,
-                     msg->set_display_size.height,
-                     msg->set_display_size.dpi);
             break;
         case SC_CONTROL_MSG_TYPE_CAMERA_SET_TORCH:
             LOG_CMSG("camera set torch %s",

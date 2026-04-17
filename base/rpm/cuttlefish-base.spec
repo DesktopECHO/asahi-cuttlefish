@@ -1,6 +1,6 @@
 Name:           cuttlefish-base
 Version:        1.50.0
-Release:        2%{?dist}
+Release:        4%{?dist}
 Summary:        Cuttlefish Android Virtual Device host packages for Fedora
 License:        Apache-2.0
 URL:            https://github.com/google/android-cuttlefish

@@ -446,29 +446,6 @@ static void test_serialize_reset_video(void) {
     assert(!memcmp(buf, expected, sizeof(expected)));
 }
 
-static void test_serialize_set_display_size(void) {
-    struct sc_control_msg msg = {
-        .type = SC_CONTROL_MSG_TYPE_SET_DISPLAY_SIZE,
-        .set_display_size = {
-            .width = 1920,
-            .height = 1080,
-            .dpi = 240,
-        },
-    };
-
-    uint8_t buf[SC_CONTROL_MSG_MAX_SIZE];
-    size_t size = sc_control_msg_serialize(&msg, buf);
-    assert(size == 7);
-
-    const uint8_t expected[] = {
-        SC_CONTROL_MSG_TYPE_SET_DISPLAY_SIZE,
-        0x07, 0x80,
-        0x04, 0x38,
-        0x00, 0xF0,
-    };
-    assert(!memcmp(buf, expected, sizeof(expected)));
-}
-
 static void test_serialize_camera_set_torch(void) {
     struct sc_control_msg msg = {
         .type = SC_CONTROL_MSG_TYPE_CAMERA_SET_TORCH,
@@ -518,6 +495,27 @@ static void test_serialize_camera_zoom_out(void) {
     assert(!memcmp(buf, expected, sizeof(expected)));
 }
 
+static void test_serialize_resize_display(void) {
+    struct sc_control_msg msg = {
+        .type = SC_CONTROL_MSG_TYPE_RESIZE_DISPLAY,
+        .resize_display = {
+            .width = 1920,
+            .height = 1080,
+        },
+    };
+
+    uint8_t buf[SC_CONTROL_MSG_MAX_SIZE];
+    size_t size = sc_control_msg_serialize(&msg, buf);
+    assert(size == 5);
+
+    const uint8_t expected[] = {
+        SC_CONTROL_MSG_TYPE_RESIZE_DISPLAY,
+        1920 >> 8, 1920 & 0xff,
+        1080 >> 8, 1080 & 0xff,
+    };
+    assert(!memcmp(buf, expected, sizeof(expected)));
+}
+
 int main(int argc, char *argv[]) {
     (void) argc;
     (void) argv;
@@ -542,9 +540,9 @@ int main(int argc, char *argv[]) {
     test_serialize_open_hard_keyboard();
     test_serialize_start_app();
     test_serialize_reset_video();
-    test_serialize_set_display_size();
     test_serialize_camera_set_torch();
     test_serialize_camera_zoom_in();
     test_serialize_camera_zoom_out();
+    test_serialize_resize_display();
     return 0;
 }

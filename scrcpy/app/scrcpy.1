@@ -385,12 +385,6 @@ By default, scrcpy automatically synchronizes the computer clipboard to the devi
 This option disables this automatic synchronization.
 
 .TP
-.B \-\-no\-downsize\-on\-error
-By default, on MediaCodec error, scrcpy automatically tries again with a lower definition.
-
-This option disables this behavior.
-
-.TP
 .B \-\-no\-key\-repeat
 Do not forward repeated key events when a key is held down.
 
@@ -429,6 +423,10 @@ Disable video playback on the computer.
 Disable scrcpy window. Implies --no-video-playback.
 
 .TP
+.B \-\-no\-window\-aspect\-ratio\-lock
+Disable window aspect ratio lock.
+
+.TP
 .BI "\-\-orientation " value
 Same as --display-orientation=value --record-orientation=value.
 
@@ -440,7 +438,7 @@ In this mode, adb (USB debugging) is not necessary, and mirroring is disabled.
 
 LAlt, LSuper or RSuper toggle the mouse capture mode, to give control of the mouse back to the computer.
 
-If any of \fB\-\-hid\-keyboard\fR or \fB\-\-hid\-mouse\fR is set, only enable keyboard or mouse respectively, otherwise enable both.
+Keyboard and mouse may be disabled separately using \fB\-\-keyboard=disabled\fR and \fB\-\-mouse=disabled\fR.
 
 It may only work over USB.
 
@@ -515,6 +513,17 @@ Request SDL to use the given render driver (this is just a hint).
 Supported names are currently "direct3d", "opengl", "opengles2", "opengles", "metal" and "software".
 
 <https://wiki.libsdl.org/SDL_HINT_RENDER_DRIVER>
+
+.TP
+.BI "\-\-render\-fit " mode
+Set the render-fit mode to configure how the rendering fits the window.
+
+Possible values are "natural" and "disabled":
+
+ - "natural": preserve the aspect ratio and fit the window as best as possible (black bars are added either at the top and bottom or at the sides if needed).
+ - "disabled": render the display at the top-left corner, without scaling.
+
+Default is "natural", unless --flex-display is set, in which case it is "disabled".
 
 .TP
 .B \-\-require\-audio
@@ -686,6 +695,10 @@ Set the initial window height.
 
 Default is 0 (automatic).
 
+.TP
+.B \-x, \-\-flex\-display
+Continuously resize the virtual display to match the window.
+
 .SH EXIT STATUS
 .B scrcpy
 will exit with code 0 on normal program termination. If an initial
@@ -835,11 +848,7 @@ Push file to device (see \fB\-\-push\-target\fR)
 
 .TP
 .B MOD+t
-Turn on the camera torch (camera mode only)
-
-.TP
-.B MOD+Shift+t
-Turn off the camera torch (camera mode only)
+Toggle window decorations/titlebar
 
 .TP
 .B MOD+Up

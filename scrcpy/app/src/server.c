@@ -401,10 +401,6 @@ execute_server(struct sc_server *server,
         // By default, clipboard_autosync is true
         ADD_PARAM("clipboard_autosync=false");
     }
-    if (!params->downsize_on_error) {
-        // By default, downsize_on_error is true
-        ADD_PARAM("downsize_on_error=false");
-    }
     if (!params->cleanup) {
         // By default, cleanup is true
         ADD_PARAM("cleanup=false");
@@ -419,6 +415,13 @@ execute_server(struct sc_server *server,
     }
     if (params->adaptive_primary_display) {
         ADD_PARAM("adaptive_primary_display=true");
+    }
+    if (params->adaptive_primary_display_dpi) {
+        ADD_PARAM("adaptive_primary_display_dpi=%" PRIu16,
+                  params->adaptive_primary_display_dpi);
+    }
+    if (params->flex_display) {
+        ADD_PARAM("flex_display=true");
     }
     if (params->display_ime_policy != SC_DISPLAY_IME_POLICY_UNDEFINED) {
         ADD_PARAM("display_ime_policy=%s",

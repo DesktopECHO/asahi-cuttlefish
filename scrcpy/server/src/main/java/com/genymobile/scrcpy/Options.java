@@ -66,6 +66,7 @@ public class Options {
 
     private NewDisplay newDisplay;
     private boolean adaptivePrimaryDisplay;
+    private int adaptivePrimaryDisplayDpi;
     private boolean vdDestroyContent = true;
     private boolean vdSystemDecorations = true;
 
@@ -82,7 +83,7 @@ public class Options {
     private boolean sendDeviceMeta = true; // send device name and size
     private boolean sendFrameMeta = true; // send PTS so that the client may record properly
     private boolean sendDummyByte = true; // write a byte on start to detect connection issues
-    private boolean sendStreamMeta = true; // write the stream metadata (codec and session)
+    private boolean sendCodecMeta = true; // write the codec metadata before the stream
 
     public Ln.Level getLogLevel() {
         return logLevel;
@@ -268,6 +269,10 @@ public class Options {
         return adaptivePrimaryDisplay;
     }
 
+    public int getAdaptivePrimaryDisplayDpi() {
+        return adaptivePrimaryDisplayDpi;
+    }
+
     public boolean getList() {
         return listEncoders || listDisplays || listCameras || listCameraSizes || listApps;
     }
@@ -304,8 +309,8 @@ public class Options {
         return sendDummyByte;
     }
 
-    public boolean getSendStreamMeta() {
-        return sendStreamMeta;
+    public boolean getSendCodecMeta() {
+        return sendCodecMeta;
     }
 
     @SuppressWarnings("MethodLength")
@@ -516,6 +521,15 @@ public class Options {
                 case "adaptive_primary_display":
                     options.adaptivePrimaryDisplay = Boolean.parseBoolean(value);
                     break;
+                case "adaptive_primary_display_dpi":
+                    options.adaptivePrimaryDisplayDpi = Integer.parseInt(value);
+                    if (options.adaptivePrimaryDisplayDpi < 0
+                            || options.adaptivePrimaryDisplayDpi > 0xFFFF) {
+                        throw new IllegalArgumentException("adaptive_primary_display_dpi ("
+                                + options.adaptivePrimaryDisplayDpi
+                                + ") must be in [0; 65535]");
+                    }
+                    break;
                 case "vd_destroy_content":
                     options.vdDestroyContent = Boolean.parseBoolean(value);
                     break;
@@ -539,8 +553,8 @@ public class Options {
                 case "send_dummy_byte":
                     options.sendDummyByte = Boolean.parseBoolean(value);
                     break;
-                case "send_stream_meta":
-                    options.sendStreamMeta = Boolean.parseBoolean(value);
+                case "send_codec_meta":
+                    options.sendCodecMeta = Boolean.parseBoolean(value);
                     break;
                 case "raw_stream":
                     boolean rawStream = Boolean.parseBoolean(value);
@@ -548,7 +562,7 @@ public class Options {
                         options.sendDeviceMeta = false;
                         options.sendFrameMeta = false;
                         options.sendDummyByte = false;
-                        options.sendStreamMeta = false;
+                        options.sendCodecMeta = false;
                     }
                     break;
                 default:

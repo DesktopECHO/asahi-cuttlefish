@@ -25,10 +25,10 @@ public final class ControlMessage {
     public static final int TYPE_OPEN_HARD_KEYBOARD_SETTINGS = 15;
     public static final int TYPE_START_APP = 16;
     public static final int TYPE_RESET_VIDEO = 17;
-    public static final int TYPE_SET_DISPLAY_SIZE = 18;
-    public static final int TYPE_CAMERA_SET_TORCH = 19;
-    public static final int TYPE_CAMERA_ZOOM_IN = 20;
-    public static final int TYPE_CAMERA_ZOOM_OUT = 21;
+    public static final int TYPE_CAMERA_SET_TORCH = 18;
+    public static final int TYPE_CAMERA_ZOOM_IN = 19;
+    public static final int TYPE_CAMERA_ZOOM_OUT = 20;
+    public static final int TYPE_RESIZE_DISPLAY = 21;
 
     public static final long SEQUENCE_INVALID = 0;
 
@@ -57,9 +57,8 @@ public final class ControlMessage {
     private boolean on;
     private int vendorId;
     private int productId;
-    private int displayWidth;
-    private int displayHeight;
-    private int displayDpi;
+    private int width;
+    private int height;
 
     private ControlMessage() {
     }
@@ -173,20 +172,18 @@ public final class ControlMessage {
         return msg;
     }
 
-    public static ControlMessage createSetDisplaySize(int width, int height,
-                                                      int dpi) {
-        ControlMessage msg = new ControlMessage();
-        msg.type = TYPE_SET_DISPLAY_SIZE;
-        msg.displayWidth = width;
-        msg.displayHeight = height;
-        msg.displayDpi = dpi;
-        return msg;
-    }
-
     public static ControlMessage createCameraSetTorch(boolean on) {
         ControlMessage msg = new ControlMessage();
         msg.type = TYPE_CAMERA_SET_TORCH;
         msg.on = on;
+        return msg;
+    }
+
+    public static ControlMessage createResizeDisplay(int width, int height) {
+        ControlMessage msg = new ControlMessage();
+        msg.type = TYPE_RESIZE_DISPLAY;
+        msg.width = width;
+        msg.height = height;
         return msg;
     }
 
@@ -274,15 +271,11 @@ public final class ControlMessage {
         return productId;
     }
 
-    public int getDisplayWidth() {
-        return displayWidth;
+    public int getWidth() {
+        return width;
     }
 
-    public int getDisplayHeight() {
-        return displayHeight;
-    }
-
-    public int getDisplayDpi() {
-        return displayDpi;
+    public int getHeight() {
+        return height;
     }
 }

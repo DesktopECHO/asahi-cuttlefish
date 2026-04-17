@@ -20,8 +20,7 @@
 #define STR(x) STR_IMPL_(x)
 
 enum {
-    OPT_BIT_RATE = 1000,
-    OPT_WINDOW_TITLE,
+    OPT_WINDOW_TITLE = 1000,
     OPT_PUSH_TARGET,
     OPT_ALWAYS_ON_TOP,
     OPT_CROP,
@@ -33,25 +32,18 @@ enum {
     OPT_WINDOW_HEIGHT,
     OPT_WINDOW_BORDERLESS,
     OPT_MAX_FPS,
-    OPT_LOCK_VIDEO_ORIENTATION,
-    OPT_DISPLAY,
     OPT_DISPLAY_ID,
-    OPT_ROTATION,
     OPT_RENDER_DRIVER,
     OPT_NO_MIPMAPS,
-    OPT_CODEC_OPTIONS,
     OPT_VIDEO_CODEC_OPTIONS,
     OPT_FORCE_ADB_FORWARD,
     OPT_DISABLE_SCREENSAVER,
     OPT_SHORTCUT_MOD,
     OPT_NO_KEY_REPEAT,
-    OPT_FORWARD_ALL_CLICKS,
     OPT_LEGACY_PASTE,
-    OPT_ENCODER,
     OPT_VIDEO_ENCODER,
     OPT_POWER_OFF_ON_CLOSE,
     OPT_V4L2_SINK,
-    OPT_DISPLAY_BUFFER,
     OPT_VIDEO_BUFFER,
     OPT_V4L2_BUFFER,
     OPT_TUNNEL_HOST,
@@ -59,12 +51,10 @@ enum {
     OPT_NO_CLIPBOARD_AUTOSYNC,
     OPT_TCPIP,
     OPT_RAW_KEY_EVENTS,
-    OPT_NO_DOWNSIZE_ON_ERROR,
     OPT_OTG,
     OPT_NO_CLEANUP,
     OPT_PRINT_FPS,
     OPT_NO_POWER_ON,
-    OPT_CODEC,
     OPT_VIDEO_CODEC,
     OPT_NO_AUDIO,
     OPT_AUDIO_BIT_RATE,
@@ -76,7 +66,6 @@ enum {
     OPT_REQUIRE_AUDIO,
     OPT_AUDIO_BUFFER,
     OPT_AUDIO_OUTPUT_BUFFER,
-    OPT_NO_DISPLAY,
     OPT_NO_VIDEO,
     OPT_NO_AUDIO_PLAYBACK,
     OPT_NO_VIDEO_PLAYBACK,
@@ -98,17 +87,13 @@ enum {
     OPT_ORIENTATION,
     OPT_KEYBOARD,
     OPT_MOUSE,
-    OPT_HID_KEYBOARD_DEPRECATED,
-    OPT_HID_MOUSE_DEPRECATED,
     OPT_NO_WINDOW,
     OPT_MOUSE_BIND,
     OPT_NO_MOUSE_HOVER,
     OPT_AUDIO_DUP,
     OPT_GAMEPAD,
     OPT_NEW_DISPLAY,
-    OPT_ADAPTIVE_NEW_DISPLAY,
     OPT_ADAPTIVE_PRIMARY_DISPLAY,
-    OPT_ADAPTIVE_SCALE,
     OPT_LIST_APPS,
     OPT_START_APP,
     OPT_SCREEN_OFF_TIMEOUT,
@@ -120,6 +105,8 @@ enum {
     OPT_CAMERA_TORCH,
     OPT_CAMERA_ZOOM,
     OPT_MIN_SIZE_ALIGNMENT,
+    OPT_NO_WINDOW_ASPECT_RATIO_LOCK,
+    OPT_RENDER_FIT,
 };
 
 struct sc_option {
@@ -269,12 +256,6 @@ static const struct sc_option options[] = {
                 "Default is 8M (8000000).",
     },
     {
-        // deprecated
-        .longopt_id = OPT_BIT_RATE,
-        .longopt = "bit-rate",
-        .argdesc = "value",
-    },
-    {
         .longopt_id = OPT_CAMERA_AR,
         .longopt = "camera-ar",
         .argdesc = "ar",
@@ -348,21 +329,6 @@ static const struct sc_option options[] = {
                 "Default is 0.",
     },
     {
-        // Not really deprecated (--codec has never been released), but without
-        // declaring an explicit --codec option, getopt_long() partial matching
-        // behavior would consider --codec to be equivalent to --codec-options,
-        // which would be confusing.
-        .longopt_id = OPT_CODEC,
-        .longopt = "codec",
-        .argdesc = "value",
-    },
-    {
-        // deprecated
-        .longopt_id = OPT_CODEC_OPTIONS,
-        .longopt = "codec-options",
-        .argdesc = "key[:type]=value[,...]",
-    },
-    {
         .longopt_id = OPT_CROP,
         .longopt = "crop",
         .argdesc = "width:height:x:y",
@@ -380,18 +346,6 @@ static const struct sc_option options[] = {
         .longopt_id = OPT_DISABLE_SCREENSAVER,
         .longopt = "disable-screensaver",
         .text = "Disable screensaver while scrcpy is running.",
-    },
-    {
-        // deprecated
-        .longopt_id = OPT_DISPLAY,
-        .longopt = "display",
-        .argdesc = "id",
-    },
-    {
-        // deprecated
-        .longopt_id = OPT_DISPLAY_BUFFER,
-        .longopt = "display-buffer",
-        .argdesc = "ms",
     },
     {
         .longopt_id = OPT_DISPLAY_ID,
@@ -433,12 +387,6 @@ static const struct sc_option options[] = {
                 "Also see -d (--select-usb).",
     },
     {
-        // deprecated
-        .longopt_id = OPT_ENCODER,
-        .longopt = "encoder",
-        .argdesc = "name",
-    },
-    {
         .shortopt = 'f',
         .longopt = "fullscreen",
         .text = "Start in fullscreen.",
@@ -448,11 +396,6 @@ static const struct sc_option options[] = {
         .longopt = "force-adb-forward",
         .text = "Do not attempt to use \"adb reverse\" to connect to the "
                 "device.",
-    },
-    {
-        // deprecated
-        .longopt_id = OPT_FORWARD_ALL_CLICKS,
-        .longopt = "forward-all-clicks",
     },
     {
         .shortopt = 'G',
@@ -510,12 +453,6 @@ static const struct sc_option options[] = {
         .text = "Kill adb when scrcpy terminates.",
     },
     {
-        // deprecated
-        //.shortopt = 'K', // old, reassigned
-        .longopt_id = OPT_HID_KEYBOARD_DEPRECATED,
-        .longopt = "hid-keyboard",
-    },
-    {
         .longopt_id = OPT_LEGACY_PASTE,
         .longopt = "legacy-paste",
         .text = "Inject computer clipboard text as a sequence of key events "
@@ -549,12 +486,6 @@ static const struct sc_option options[] = {
         .text = "List video and audio encoders available on the device.",
     },
     {
-        // deprecated
-        .longopt_id = OPT_LOCK_VIDEO_ORIENTATION,
-        .longopt = "lock-video-orientation",
-        .argdesc = "value",
-    },
-    {
         .shortopt = 'm',
         .longopt = "max-size",
         .argdesc = "value",
@@ -562,12 +493,6 @@ static const struct sc_option options[] = {
                 "other dimension is computed so that the device aspect-ratio "
                 "is preserved.\n"
                 "Default is 0 (unlimited).",
-    },
-    {
-        // deprecated
-        //.shortopt = 'M', // old, reassigned
-        .longopt_id = OPT_HID_MOUSE_DEPRECATED,
-        .longopt = "hid-mouse",
     },
     {
         .shortopt = 'M',
@@ -661,31 +586,15 @@ static const struct sc_option options[] = {
                 "    --new-display=/240    # main display size and 240 dpi",
     },
     {
-        .longopt_id = OPT_ADAPTIVE_NEW_DISPLAY,
-        .longopt = "adaptive-new-display",
-        .argdesc = "[<width>x<height>][/<dpi>]",
-        .optional_arg = true,
-        .text = "Create a new display that adapts to the scrcpy window size.\n"
-                "When the window is resized, the virtual display is resized "
-                "accordingly and its density is updated.\n"
-                "If /<dpi> is provided, use that fixed density.",
-    },
-    {
         .longopt_id = OPT_ADAPTIVE_PRIMARY_DISPLAY,
         .longopt = "adaptive-primary-display",
-        .argdesc = "[<width>x<height>][/<dpi>]",
+        .argdesc = "[dpi]",
         .optional_arg = true,
         .text = "Resize the primary Android display to follow the scrcpy "
                 "window size.\n"
-                "This changes the logical size and density of display 0.\n"
-                "If /<dpi> is provided, use that fixed density.",
-    },
-    {
-        .longopt_id = OPT_ADAPTIVE_SCALE,
-        .longopt = "adaptive-scale",
-        .argdesc = "<scale>",
-        .text = "Set adaptive scale factor (dpi = scale * 160). "
-                "Default is 1.0 (dpi=160).",
+                "This changes the logical size of display 0 dynamically.\n"
+                "Optionally provide the fixed display density to keep while "
+                "the resolution changes.",
     },
     {
         .longopt_id = OPT_NO_AUDIO,
@@ -713,18 +622,6 @@ static const struct sc_option options[] = {
                 "and the device clipboard to the computer clipboard whenever "
                 "it changes.\n"
                 "This option disables this automatic synchronization."
-    },
-    {
-        .longopt_id = OPT_NO_DOWNSIZE_ON_ERROR,
-        .longopt = "no-downsize-on-error",
-        .text = "By default, on MediaCodec error, scrcpy automatically tries "
-                "again with a lower definition.\n"
-                "This option disables this behavior.",
-    },
-    {
-        // deprecated
-        .longopt_id = OPT_NO_DISPLAY,
-        .longopt = "no-display",
     },
     {
         .longopt_id = OPT_NO_KEY_REPEAT,
@@ -777,6 +674,11 @@ static const struct sc_option options[] = {
         .longopt_id = OPT_NO_WINDOW,
         .longopt = "no-window",
         .text = "Disable scrcpy window. Implies --no-video-playback.",
+    },
+    {
+        .longopt_id = OPT_NO_WINDOW_ASPECT_RATIO_LOCK,
+        .longopt = "no-window-aspect-ratio-lock",
+        .text = "Disable window aspect ratio lock.",
     },
     {
         .longopt_id = OPT_ORIENTATION,
@@ -890,17 +792,26 @@ static const struct sc_option options[] = {
                 "<https://wiki.libsdl.org/SDL_HINT_RENDER_DRIVER>",
     },
     {
+        .longopt_id = OPT_RENDER_FIT,
+        .longopt = "render-fit",
+        .argdesc = "mode",
+        .text = "Set the render-fit mode to configure how the rendering fits "
+                "the window.\n"
+                "Possible values are \"natural\" and \"disabled\".\n"
+                "\"natural\": preserve the aspect ratio and fit the window as "
+                "best as possible (black bars are added either at the top and "
+                "bottom or at the sides if needed).\n"
+                "\"disabled\": render the display at the top-left corner, "
+                "without scaling.\n"
+                "Default is \"natural\", unless --flex-display is set, in "
+                "which case it is \"disabled\".",
+    },
+    {
         .longopt_id = OPT_REQUIRE_AUDIO,
         .longopt = "require-audio",
         .text = "By default, scrcpy mirrors only the video when audio capture "
                 "fails on the device. This option makes scrcpy fail if audio "
                 "is enabled but does not work."
-    },
-    {
-        // deprecated
-        .longopt_id = OPT_ROTATION,
-        .longopt = "rotation",
-        .argdesc = "value",
     },
     {
         .shortopt = 's',
@@ -1118,6 +1029,11 @@ static const struct sc_option options[] = {
         .text = "Set the initial window height.\n"
                 "Default is 0 (automatic).",
     },
+    {
+        .shortopt = 'x',
+        .longopt = "flex-display",
+        .text = "Continuously resize the virtual display to match the window.",
+    },
 };
 
 static const struct sc_shortcut shortcuts[] = {
@@ -1156,10 +1072,6 @@ static const struct sc_shortcut shortcuts[] = {
     {
         .shortcuts = { "MOD+g" },
         .text = "Resize window to 1:1 (pixel-perfect)",
-    },
-    {
-        .shortcuts = { "MOD+t" },
-        .text = "Toggle window decorations/titlebar",
     },
     {
         .shortcuts = { "MOD+w", "Double-click on black borders" },
@@ -1265,6 +1177,10 @@ static const struct sc_shortcut shortcuts[] = {
     {
         .shortcuts = { "Drag & drop non-APK file" },
         .text = "Push file to device (see --push-target)",
+    },
+    {
+        .shortcuts = { "MOD+t" },
+        .text = "Toggle window decorations/titlebar",
     },
     {
         .shortcuts = { "MOD+Up" },
@@ -1848,6 +1764,18 @@ parse_window_dimension(const char *s, uint16_t *dimension) {
 }
 
 static bool
+parse_display_dpi(const char *s, uint16_t *dpi) {
+    long value;
+    bool ok = parse_integer_arg(s, &value, false, 1, 0xFFFF, "display dpi");
+    if (!ok) {
+        return false;
+    }
+
+    *dpi = (uint16_t) value;
+    return true;
+}
+
+static bool
 parse_port_range(const char *s, struct sc_port_range *port_range) {
     long values[2];
     size_t count = parse_integers_arg(s, ':', 2, values, 0, 0xFFFF, "port");
@@ -1884,79 +1812,6 @@ parse_display_id(const char *s, uint32_t *display_id) {
     }
 
     *display_id = (uint32_t) value;
-    return true;
-}
-
-static bool
-parse_display_dpi(const char *s, uint16_t *dpi_out, bool *has_dpi_out) {
-    *has_dpi_out = false;
-    if (!s) {
-        return true;
-    }
-
-    const char *slash = strrchr(s, '/');
-    if (!slash) {
-        return true;
-    }
-
-    const char *dpi_str = slash + 1;
-    if (*dpi_str == '\0') {
-        return false;
-    }
-
-    long value = 0;
-    if (!sc_str_parse_integer(dpi_str, &value) || value <= 0
-            || value > 0xFFFF) {
-        return false;
-    }
-
-    *dpi_out = (uint16_t) value;
-    *has_dpi_out = true;
-    return true;
-}
-
-static bool
-parse_display_size(const char *s, uint16_t *width_out, uint16_t *height_out,
-                   bool *has_size_out) {
-    *has_size_out = false;
-    if (!s) {
-        return true;
-    }
-
-    size_t len = strcspn(s, "/");
-    if (len == 0) {
-        return true;
-    }
-
-    char buf[64];
-    if (len >= sizeof(buf)) {
-        return false;
-    }
-
-    memcpy(buf, s, len);
-    buf[len] = '\0';
-
-    char *x = strchr(buf, 'x');
-    if (!x) {
-        return false;
-    }
-
-    *x = '\0';
-
-    long width = 0;
-    if (!sc_str_parse_integer(buf, &width) || width <= 0 || width > 0xFFFF) {
-        return false;
-    }
-
-    long height = 0;
-    if (!sc_str_parse_integer(x + 1, &height) || height <= 0
-            || height > 0xFFFF) {
-        return false;
-    }
-
-    *width_out = (uint16_t) width;
-    *height_out = (uint16_t) height;
-    *has_size_out = true;
     return true;
 }
 
@@ -2324,7 +2179,7 @@ parse_keyboard(const char *optarg, enum sc_keyboard_input_mode *mode) {
 #endif
     }
 
-    LOGE("Unsupported keyboard: %s (expected disabled, sdk, uhid and aoa)",
+    LOGE("Unsupported keyboard: %s (expected disabled, sdk, uhid or aoa)",
          optarg);
     return false;
 }
@@ -2510,6 +2365,22 @@ parse_mouse_bindings(const char *s, struct sc_mouse_bindings *mb) {
 }
 
 static bool
+parse_render_fit(const char *optarg, enum sc_render_fit *mode) {
+    if (!strcmp(optarg, "natural")) {
+        *mode = SC_RENDER_FIT_NATURAL;
+        return true;
+    }
+
+    if (!strcmp(optarg, "disabled")) {
+        *mode = SC_RENDER_FIT_DISABLED;
+        return true;
+    }
+
+    LOGE("Unsupported render-fit: %s (expected natural or disabled)", optarg);
+    return false;
+}
+
+static bool
 parse_args_with_getopt(struct scrcpy_cli_args *args, int argc, char *argv[],
                        const char *optstring, const struct option *longopts) {
     struct scrcpy_options *opts = &args->opts;
@@ -2519,10 +2390,6 @@ parse_args_with_getopt(struct scrcpy_cli_args *args, int argc, char *argv[],
     int c;
     while ((c = getopt_long(argc, argv, optstring, longopts, NULL)) != -1) {
         switch (c) {
-            case OPT_BIT_RATE:
-                LOGE("--bit-rate has been removed, "
-                     "use --video-bit-rate or --audio-bit-rate.");
-                return false;
             case 'b':
                 if (!parse_bit_rate(optarg, &opts->video_bit_rate)) {
                     return false;
@@ -2536,9 +2403,6 @@ parse_args_with_getopt(struct scrcpy_cli_args *args, int argc, char *argv[],
             case OPT_CROP:
                 opts->crop = optarg;
                 break;
-            case OPT_DISPLAY:
-                LOGE("--display has been removed, use --display-id instead.");
-                return false;
             case OPT_DISPLAY_ID:
                 if (!parse_display_id(optarg, &opts->display_id)) {
                     return false;
@@ -2569,10 +2433,6 @@ parse_args_with_getopt(struct scrcpy_cli_args *args, int argc, char *argv[],
                     return false;
                 }
                 break;
-            case OPT_HID_KEYBOARD_DEPRECATED:
-                LOGE("--hid-keyboard has been removed, use --keyboard=aoa or "
-                     "--keyboard=uhid instead.");
-                return false;
             case OPT_MAX_FPS:
                 opts->max_fps = optarg;
                 break;
@@ -2597,14 +2457,6 @@ parse_args_with_getopt(struct scrcpy_cli_args *args, int argc, char *argv[],
             case OPT_NO_MOUSE_HOVER:
                 opts->mouse_hover = false;
                 break;
-            case OPT_HID_MOUSE_DEPRECATED:
-                LOGE("--hid-mouse has been removed, use --mouse=aoa or "
-                     "--mouse=uhid instead.");
-                return false;
-            case OPT_LOCK_VIDEO_ORIENTATION:
-                LOGE("--lock-video-orientation has been removed, use "
-                     "--capture-orientation instead.");
-                return false;
             case OPT_CAPTURE_ORIENTATION:
                 if (!parse_capture_orientation(optarg,
                                           &opts->capture_orientation,
@@ -2625,10 +2477,6 @@ parse_args_with_getopt(struct scrcpy_cli_args *args, int argc, char *argv[],
             case 'n':
                 opts->control = false;
                 break;
-            case OPT_NO_DISPLAY:
-                LOGE("--no-display has been removed, use --no-playback "
-                     "instead.");
-                return false;
             case 'N':
                 opts->video_playback = false;
                 opts->audio_playback = false;
@@ -2713,10 +2561,6 @@ parse_args_with_getopt(struct scrcpy_cli_args *args, int argc, char *argv[],
                 }
                 opts->key_inject_mode = SC_KEY_INJECT_MODE_RAW;
                 break;
-            case OPT_ROTATION:
-                LOGE("--rotation has been removed, use --orientation or "
-                     "--capture-orientation instead.");
-                return false;
             case OPT_DISPLAY_ORIENTATION:
                 if (!parse_orientation(optarg, &opts->display_orientation)) {
                     return false;
@@ -2745,20 +2589,12 @@ parse_args_with_getopt(struct scrcpy_cli_args *args, int argc, char *argv[],
             case OPT_NO_KEY_REPEAT:
                 opts->forward_key_repeat = false;
                 break;
-            case OPT_CODEC_OPTIONS:
-                LOGE("--codec-options has been removed, "
-                     "use --video-codec-options or --audio-codec-options.");
-                return false;
             case OPT_VIDEO_CODEC_OPTIONS:
                 opts->video_codec_options = optarg;
                 break;
             case OPT_AUDIO_CODEC_OPTIONS:
                 opts->audio_codec_options = optarg;
                 break;
-            case OPT_ENCODER:
-                LOGE("--encoder has been removed, "
-                     "use --video-encoder or --audio-encoder.");
-                return false;
             case OPT_VIDEO_ENCODER:
                 opts->video_encoder = optarg;
                 break;
@@ -2776,20 +2612,12 @@ parse_args_with_getopt(struct scrcpy_cli_args *args, int argc, char *argv[],
                     return false;
                 }
                 break;
-            case OPT_FORWARD_ALL_CLICKS:
-                LOGE("--forward-all-clicks has been removed, "
-                     "use --mouse-bind=++++ instead.");
-                return false;
             case OPT_LEGACY_PASTE:
                 opts->legacy_paste = true;
                 break;
             case OPT_POWER_OFF_ON_CLOSE:
                 opts->power_off_on_close = true;
                 break;
-            case OPT_DISPLAY_BUFFER:
-                LOGE("--display-buffer has been removed, use --video-buffer "
-                     "instead.");
-                return false;
             case OPT_VIDEO_BUFFER:
                 if (!parse_buffering_time(optarg, &opts->video_buffer)) {
                     return false;
@@ -2801,9 +2629,6 @@ parse_args_with_getopt(struct scrcpy_cli_args *args, int argc, char *argv[],
             case OPT_TCPIP:
                 opts->tcpip = true;
                 opts->tcpip_dst = optarg;
-                break;
-            case OPT_NO_DOWNSIZE_ON_ERROR:
-                opts->downsize_on_error = false;
                 break;
             case OPT_NO_VIDEO:
                 opts->video = false;
@@ -2820,10 +2645,6 @@ parse_args_with_getopt(struct scrcpy_cli_args *args, int argc, char *argv[],
             case OPT_PRINT_FPS:
                 opts->start_fps_counter = true;
                 break;
-            case OPT_CODEC:
-                LOGE("--codec has been removed, "
-                     "use --video-codec or --audio-codec.");
-                return false;
             case OPT_VIDEO_CODEC:
                 if (!parse_video_codec(optarg, &opts->video_codec)) {
                     return false;
@@ -2959,60 +2780,15 @@ parse_args_with_getopt(struct scrcpy_cli_args *args, int argc, char *argv[],
             case OPT_NEW_DISPLAY:
                 opts->new_display = optarg ? optarg : "";
                 break;
-            case OPT_ADAPTIVE_NEW_DISPLAY:
-                opts->adaptive_new_display = true;
-                opts->new_display = optarg ? optarg : "";
-                if (optarg) {
-                    uint16_t dpi = 0;
-                    bool has_dpi = false;
-                    if (!parse_display_dpi(optarg, &dpi, &has_dpi)) {
-                        LOGE("Invalid adaptive-new-display DPI: %s", optarg);
-                        return false;
-                    }
-                    if (has_dpi) {
-                        opts->adaptive_dpi = dpi;
-                    }
-                }
-                break;
             case OPT_ADAPTIVE_PRIMARY_DISPLAY:
                 opts->adaptive_primary_display = true;
-                if (optarg) {
-                    uint16_t width = 0;
-                    uint16_t height = 0;
-                    bool has_size = false;
-                    if (!parse_display_size(optarg, &width, &height,
-                                            &has_size)) {
-                        LOGE("Invalid adaptive-primary-display size: %s",
-                             optarg);
-                        return false;
-                    }
-                    if (has_size) {
-                        opts->window_width = width;
-                        opts->window_height = height;
-                    }
-
-                    uint16_t dpi = 0;
-                    bool has_dpi = false;
-                    if (!parse_display_dpi(optarg, &dpi, &has_dpi)) {
-                        LOGE("Invalid adaptive-primary-display DPI: %s",
-                             optarg);
-                        return false;
-                    }
-                    if (has_dpi) {
-                        opts->adaptive_dpi = dpi;
-                    }
-                }
-                break;
-            case OPT_ADAPTIVE_SCALE: {
-                char *endptr = NULL;
-                double value = strtod(optarg, &endptr);
-                if (!endptr || *endptr != '\0' || value <= 0.0) {
-                    LOGE("Invalid adaptive scale: %s", optarg);
+                opts->flex_display = true;
+                if (optarg
+                        && !parse_display_dpi(
+                            optarg, &opts->adaptive_primary_display_dpi)) {
                     return false;
                 }
-                opts->adaptive_scale = value;
                 break;
-            }
             case OPT_START_APP:
                 opts->start_app = optarg;
                 break;
@@ -3042,6 +2818,17 @@ parse_args_with_getopt(struct scrcpy_cli_args *args, int argc, char *argv[],
                                               &opts->min_size_alignment)) {
                     return false;
                 }
+                break;
+            case OPT_NO_WINDOW_ASPECT_RATIO_LOCK:
+                opts->window_aspect_ratio_lock = false;
+                break;
+            case OPT_RENDER_FIT:
+                if (!parse_render_fit(optarg, &opts->render_fit)) {
+                    return false;
+                }
+                break;
+            case 'x':
+                opts->flex_display = true;
                 break;
             default:
                 // getopt prints the error message on stderr
@@ -3132,16 +2919,9 @@ parse_args_with_getopt(struct scrcpy_cli_args *args, int argc, char *argv[],
     }
 
 #ifdef HAVE_V4L2
-    if (v4l2) {
-        if (!opts->video) {
-            LOGE("V4L2 sink requires video capture, but --no-video was set.");
-            return false;
-        }
-
-        // V4L2 could not handle size change.
-        // Do not log because downsizing on error is the default behavior,
-        // not an explicit request from the user.
-        opts->downsize_on_error = false;
+    if (v4l2 && !opts->video) {
+        LOGE("V4L2 sink requires video capture, but --no-video was set.");
+        return false;
     }
 
     if (opts->v4l2_buffer && !opts->v4l2_device) {
@@ -3240,6 +3020,11 @@ parse_args_with_getopt(struct scrcpy_cli_args *args, int argc, char *argv[],
             LOGE("--adaptive-primary-display is incompatible with --no-video");
             return false;
         }
+    }
+
+    if (opts->render_fit == SC_RENDER_FIT_AUTO) {
+        opts->render_fit = opts->flex_display ? SC_RENDER_FIT_DISABLED
+                                              : SC_RENDER_FIT_NATURAL;
     }
 
     if (otg) {
@@ -3361,9 +3146,31 @@ parse_args_with_getopt(struct scrcpy_cli_args *args, int argc, char *argv[],
         return false;
     }
 
+    if (opts->flex_display) {
+        if (!opts->adaptive_primary_display
+                && (opts->video_source != SC_VIDEO_SOURCE_DISPLAY
+                    || !opts->new_display)) {
+            LOGE("-x/--flex-display can only be applied to displays created "
+                 "with --new-display, or with --adaptive-primary-display");
+            return false;
+        }
+
+        if (opts->max_size) {
+            LOGE("--max-size is not compatible with -x/--flex-display");
+            return false;
+        }
+
+        if (opts->crop) {
+            LOGE("--crop is not compatible with -x/--flex-display");
+            return false;
+        }
+
+        // Force free resizing
+        opts->window_aspect_ratio_lock = false;
+    }
+
     if (opts->adaptive_primary_display && opts->new_display) {
-        LOGE("--adaptive-primary-display is incompatible with "
-             "--new-display/--adaptive-new-display");
+        LOGE("--adaptive-primary-display is incompatible with --new-display");
         return false;
     }
 

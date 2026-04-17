@@ -80,8 +80,19 @@ public final class Size {
         return new Size(w, h);
     }
 
+    /**
+     * Round both dimensions of this size to be a multiple of 8 (as required by many encoders).
+     */
+    public Size round8() {
+        return round(8);
+    }
+
     public boolean isMultipleOf(int alignment) {
         return width % alignment == 0 && height % alignment == 0;
+    }
+
+    public boolean isMultipleOf8() {
+        return isMultipleOf(8);
     }
 
     public Rect toRect() {

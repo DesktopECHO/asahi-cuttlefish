@@ -220,6 +220,12 @@ enum sc_shortcut_mod {
     SC_SHORTCUT_MOD_RSUPER = 1 << 5,
 };
 
+enum sc_render_fit {
+    SC_RENDER_FIT_AUTO,
+    SC_RENDER_FIT_NATURAL,
+    SC_RENDER_FIT_DISABLED,
+};
+
 struct sc_port_range {
     uint16_t first;
     uint16_t last;
@@ -269,6 +275,7 @@ struct scrcpy_options {
     enum sc_orientation display_orientation;
     enum sc_orientation record_orientation;
     enum sc_display_ime_policy display_ime_policy;
+    enum sc_render_fit render_fit;
     int16_t window_x; // SC_WINDOW_POSITION_UNDEFINED for "auto"
     int16_t window_y; // SC_WINDOW_POSITION_UNDEFINED for "auto"
     uint16_t window_width;
@@ -294,6 +301,7 @@ struct scrcpy_options {
     bool audio_playback;
     bool turn_screen_off;
     enum sc_key_inject_mode key_inject_mode;
+    bool window_aspect_ratio_lock;
     bool window_borderless;
     bool mipmaps;
     bool stay_awake;
@@ -303,7 +311,6 @@ struct scrcpy_options {
     bool legacy_paste;
     bool power_off_on_close;
     bool clipboard_autosync;
-    bool downsize_on_error;
     bool tcpip;
     const char *tcpip_dst;
     bool select_usb;
@@ -326,14 +333,13 @@ struct scrcpy_options {
     bool mouse_hover;
     bool audio_dup;
     const char *new_display; // [<width>x<height>][/<dpi>] parsed by the server
-    bool adaptive_new_display;
     bool adaptive_primary_display;
-    double adaptive_scale;
-    uint16_t adaptive_dpi; // if non-zero, use as fixed dpi for adaptive mode
+    uint16_t adaptive_primary_display_dpi;
     const char *start_app;
     bool vd_destroy_content;
     bool vd_system_decorations;
     bool camera_torch;
+    bool flex_display;
 };
 
 extern const struct scrcpy_options scrcpy_options_default;

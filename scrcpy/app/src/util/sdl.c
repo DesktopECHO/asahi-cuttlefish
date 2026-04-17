@@ -107,7 +107,8 @@ void
 sc_sdl_set_window_position(SDL_Window *window, struct sc_point point) {
     bool ok = SDL_SetWindowPosition(window, point.x, point.y);
     if (!ok) {
-        LOGW("Could not set window position: %s", SDL_GetError());
+        LOGE("Could not set window position: %s", SDL_GetError());
+        assert(!"unexpected");
     }
 }
 

@@ -43,7 +43,6 @@ public class SurfaceEncoder implements AsyncProcessor {
     private final int videoBitRate;
     private final float maxFps;
     private final boolean downsizeOnError;
-    private final int minSizeAlignment;
 
     private boolean firstFrameSent;
     private int consecutiveErrors;
@@ -61,35 +60,27 @@ public class SurfaceEncoder implements AsyncProcessor {
         this.codecOptions = options.getVideoCodecOptions();
         this.encoderName = options.getVideoEncoder();
         this.downsizeOnError = options.getDownsizeOnError();
-        this.minSizeAlignment = options.getMinSizeAlignment();
     }
 
     private void streamCapture() throws IOException, ConfigurationException {
         Codec codec = streamer.getCodec();
         MediaCodec mediaCodec = createMediaCodec(codec, encoderName);
-
-        MediaCodecInfo.VideoCapabilities caps = mediaCodec.getCodecInfo().getCapabilitiesForType(codec.getMimeType())
-                .getVideoCapabilities();
-        int alignment = caps != null ? Math.max(caps.getWidthAlignment(), caps.getHeightAlignment()) : 8;
-        Ln.d("Video codec size alignment requirement: " + alignment + "px");
-        if (alignment < minSizeAlignment) {
-            alignment = minSizeAlignment;
-            Ln.d("Actual video size alignment: " + alignment + "px");
-        }
-
         MediaFormat format = createFormat(codec.getMimeType(), videoBitRate, maxFps, codecOptions);
 
-        capture.init(reset, alignment);
+        capture.init(reset);
 
         try {
             boolean alive;
-
-            streamer.writeVideoHeader();
+            boolean headerWritten = false;
 
             do {
                 reset.consumeReset(); // If a capture reset was requested, it is implicitly fulfilled
                 capture.prepare();
                 Size size = capture.getSize();
+                if (!headerWritten) {
+                    streamer.writeVideoHeader(size);
+                    headerWritten = true;
+                }
 
                 format.setInteger(MediaFormat.KEY_WIDTH, size.getWidth());
                 format.setInteger(MediaFormat.KEY_HEIGHT, size.getHeight());
@@ -116,7 +107,6 @@ public class SurfaceEncoder implements AsyncProcessor {
                         boolean resetRequested = reset.consumeReset();
                         if (!resetRequested) {
                             // If a reset is requested during encode(), it will interrupt the encoding by an EOS
-                            streamer.writeSessionMeta(size.getWidth(), size.getHeight());
                             encode(mediaCodec, streamer);
                         }
                         // The capture might have been closed internally (for example if the camera is disconnected)
@@ -276,14 +266,6 @@ public class SurfaceEncoder implements AsyncProcessor {
         format.setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, DEFAULT_I_FRAME_INTERVAL);
         // display the very first frame, and recover from bad quality when no new frames
         format.setLong(MediaFormat.KEY_REPEAT_PREVIOUS_FRAME_AFTER, REPEAT_FRAME_DELAY_US); // µs
-        if (Build.VERSION.SDK_INT >= AndroidVersions.API_23_ANDROID_6_0) {
-            // real-time priority
-            format.setInteger(MediaFormat.KEY_PRIORITY, 0);
-        }
-        if (Build.VERSION.SDK_INT >= AndroidVersions.API_26_ANDROID_8_0) {
-            // output 1 frame as soon as 1 frame is queued
-            format.setInteger(MediaFormat.KEY_LATENCY, 1);
-        }
         if (maxFps > 0) {
             // The key existed privately before Android 10:
             // <https://android.googlesource.com/platform/frameworks/base/+/625f0aad9f7a259b6881006ad8710adce57d1384%5E%21/>

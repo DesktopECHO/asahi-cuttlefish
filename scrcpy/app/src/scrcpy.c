@@ -438,13 +438,14 @@ scrcpy(struct scrcpy_options *options) {
         .control = options->control,
         .display_id = options->display_id,
         .new_display = options->new_display,
-        .adaptive_primary_display = options->adaptive_primary_display,
         .display_ime_policy = options->display_ime_policy,
         .video = options->video,
         .audio = options->audio,
         .audio_dup = options->audio_dup,
         .show_touches = options->show_touches,
         .stay_awake = options->stay_awake,
+        .adaptive_primary_display = options->adaptive_primary_display,
+        .adaptive_primary_display_dpi = options->adaptive_primary_display_dpi,
         .video_codec_options = options->video_codec_options,
         .audio_codec_options = options->audio_codec_options,
         .video_encoder = options->video_encoder,
@@ -456,7 +457,6 @@ scrcpy(struct scrcpy_options *options) {
         .force_adb_forward = options->force_adb_forward,
         .power_off_on_close = options->power_off_on_close,
         .clipboard_autosync = options->clipboard_autosync,
-        .downsize_on_error = options->downsize_on_error,
         .tcpip = options->tcpip,
         .tcpip_dst = options->tcpip_dst,
         .cleanup = options->cleanup,
@@ -467,6 +467,7 @@ scrcpy(struct scrcpy_options *options) {
         .camera_zoom = options->camera_zoom,
         .vd_destroy_content = options->vd_destroy_content,
         .vd_system_decorations = options->vd_system_decorations,
+        .flex_display = options->flex_display,
         .list = options->list,
     };
 
@@ -799,6 +800,7 @@ aoa_complete:
         struct sc_screen_params screen_params = {
             .video = options->video_playback,
             .camera = options->video_source == SC_VIDEO_SOURCE_CAMERA,
+            .flex_display = options->flex_display,
             .controller = controller,
             .fp = fp,
             .kp = kp,
@@ -814,16 +816,13 @@ aoa_complete:
             .window_y = options->window_y,
             .window_width = options->window_width,
             .window_height = options->window_height,
+            .window_aspect_ratio_lock = options->window_aspect_ratio_lock,
             .window_borderless = options->window_borderless,
+            .render_fit = options->render_fit,
             .orientation = options->display_orientation,
             .mipmaps = options->mipmaps,
             .fullscreen = options->fullscreen,
             .start_fps_counter = options->start_fps_counter,
-            .new_display = options->new_display != NULL,
-            .adaptive_new_display = options->adaptive_new_display,
-            .adaptive_primary_display = options->adaptive_primary_display,
-            .adaptive_scale = options->adaptive_scale,
-            .adaptive_dpi = options->adaptive_dpi,
         };
 
         if (!sc_screen_init(&s->screen, &screen_params)) {

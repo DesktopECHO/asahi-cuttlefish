@@ -60,6 +60,7 @@ public class CameraCapture extends SurfaceCapture {
     private final CameraFacing cameraFacing;
     private final Size explicitSize;
     private int maxSize;
+    private final int minSizeAlignment;
     private final CameraAspectRatio aspectRatio;
     private final int fps;
     private final boolean highSpeed;
@@ -83,17 +84,15 @@ public class CameraCapture extends SurfaceCapture {
     private Executor cameraExecutor;
 
     private final AtomicBoolean disconnected = new AtomicBoolean();
-
-    // The following fields must be accessed only from the camera thread
-    private boolean started;
-    private CaptureRequest.Builder requestBuilder;
     private CameraCaptureSession currentSession;
+    private CaptureRequest.Builder requestBuilder;
 
     public CameraCapture(Options options) {
         this.explicitCameraId = options.getCameraId();
         this.cameraFacing = options.getCameraFacing();
         this.explicitSize = options.getCameraSize();
         this.maxSize = options.getMaxSize();
+        this.minSizeAlignment = options.getMinSizeAlignment();
         this.aspectRatio = options.getCameraAspectRatio();
         this.fps = options.getCameraFps();
         this.highSpeed = options.getCameraHighSpeed();
@@ -263,7 +262,6 @@ public class CameraCapture extends SurfaceCapture {
         return ratio.getAspectRatio();
     }
 
-    @TargetApi(AndroidVersions.API_30_ANDROID_11)
     @Override
     public void start(Surface surface) throws IOException {
         if (transform != null) {
@@ -275,70 +273,41 @@ public class CameraCapture extends SurfaceCapture {
             surface = glRunner.start(captureSize, videoSize, surface);
         }
 
-        cameraHandler.post(() -> {
-            assertCameraThread();
-            started = true;
-        });
-
-        Surface captureSurface = surface;
-        OutputConfiguration outputConfig = new OutputConfiguration(captureSurface);
-        List<OutputConfiguration> outputs = Collections.singletonList(outputConfig);
-        int sessionType = highSpeed ? SessionConfiguration.SESSION_HIGH_SPEED : SessionConfiguration.SESSION_REGULAR;
-        SessionConfiguration sessionConfig = new SessionConfiguration(sessionType, outputs, cameraExecutor, new CameraCaptureSession.StateCallback() {
-            @Override
-            public void onConfigured(CameraCaptureSession session) {
-                assertCameraThread();
-                if (!started) {
-                    // Stopped on the encoder thread between the call to start() and this callback
-                    return;
-                }
-
-                CameraManager cameraManager = ServiceManager.getCameraManager();
-                try {
-                    CameraCharacteristics characteristics = cameraManager.getCameraCharacteristics(cameraId);
-                    zoomRange = characteristics.get(CameraCharacteristics.CONTROL_ZOOM_RATIO_RANGE);
-                } catch (CameraAccessException e) {
-                    Ln.w("Could not get camera characteristics");
-                }
-
-                try {
-                    requestBuilder = cameraDevice.createCaptureRequest(CameraDevice.TEMPLATE_RECORD);
-                    requestBuilder.addTarget(captureSurface);
-
-                    if (fps > 0) {
-                        requestBuilder.set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, new Range<>(fps, fps));
-                    }
-                    if (initialTorch) {
-                        Ln.i("Turn camera torch on");
-                        requestBuilder.set(CaptureRequest.FLASH_MODE, CaptureRequest.FLASH_MODE_TORCH);
-                    }
-                    if (zoom != 1) {
-                        zoom = clampZoom(zoom);
-                        Ln.i("Set camera zoom: " + zoom);
-                        requestBuilder.set(CaptureRequest.CONTROL_ZOOM_RATIO, zoom);
-                    }
-
-                    CaptureRequest request = requestBuilder.build();
-                    setRepeatingRequest(session, request);
-                    currentSession = session;
-                } catch (CameraAccessException e) {
-                    Ln.e("Camera error", e);
-                    disconnected.set(true);
-                    invalidate();
-                }
-            }
-
-            @Override
-            public void onConfigureFailed(CameraCaptureSession session) {
-                Ln.e("Camera configuration error");
-                disconnected.set(true);
-                invalidate();
-            }
-        });
-
         try {
-            cameraDevice.createCaptureSession(sessionConfig);
-        } catch (CameraAccessException e) {
+            CameraCaptureSession session = createCaptureSession(cameraDevice, surface);
+
+            CameraManager cameraManager = ServiceManager.getCameraManager();
+            try {
+                CameraCharacteristics characteristics =
+                        cameraManager.getCameraCharacteristics(cameraId);
+                zoomRange = characteristics.get(
+                        CameraCharacteristics.CONTROL_ZOOM_RATIO_RANGE);
+            } catch (CameraAccessException e) {
+                Ln.w("Could not get camera characteristics");
+            }
+
+            requestBuilder = cameraDevice.createCaptureRequest(
+                    CameraDevice.TEMPLATE_RECORD);
+            requestBuilder.addTarget(surface);
+            if (fps > 0) {
+                requestBuilder.set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE,
+                        new Range<>(fps, fps));
+            }
+            if (initialTorch) {
+                Ln.i("Turn camera torch on");
+                requestBuilder.set(CaptureRequest.FLASH_MODE,
+                        CaptureRequest.FLASH_MODE_TORCH);
+            }
+            if (zoom != 1f) {
+                zoom = clampZoom(zoom);
+                Ln.i("Set camera zoom: " + zoom);
+                requestBuilder.set(CaptureRequest.CONTROL_ZOOM_RATIO, zoom);
+            }
+
+            CaptureRequest request = requestBuilder.build();
+            setRepeatingRequest(session, request);
+            currentSession = session;
+        } catch (CameraAccessException | InterruptedException e) {
             stop();
             throw new IOException(e);
         }
@@ -346,13 +315,8 @@ public class CameraCapture extends SurfaceCapture {
 
     @Override
     public void stop() {
-        cameraHandler.post(() -> {
-            assertCameraThread();
-            currentSession = null;
-            requestBuilder = null;
-            started = false;
-        });
-
+        currentSession = null;
+        requestBuilder = null;
         if (glRunner != null) {
             glRunner.stopAndRelease();
             glRunner = null;
@@ -382,6 +346,10 @@ public class CameraCapture extends SurfaceCapture {
 
         this.maxSize = maxSize;
         return true;
+    }
+
+    private int getAlignment() {
+        return Math.max(8, minSizeAlignment);
     }
 
     @SuppressLint("MissingPermission")
@@ -433,7 +401,35 @@ public class CameraCapture extends SurfaceCapture {
     }
 
     @TargetApi(AndroidVersions.API_31_ANDROID_12)
-    private void setRepeatingRequest(CameraCaptureSession session, CaptureRequest request) throws CameraAccessException {
+    private CameraCaptureSession createCaptureSession(CameraDevice camera, Surface surface) throws CameraAccessException, InterruptedException {
+        CompletableFuture<CameraCaptureSession> future = new CompletableFuture<>();
+        OutputConfiguration outputConfig = new OutputConfiguration(surface);
+        List<OutputConfiguration> outputs = Collections.singletonList(outputConfig);
+
+        int sessionType = highSpeed ? SessionConfiguration.SESSION_HIGH_SPEED : SessionConfiguration.SESSION_REGULAR;
+        SessionConfiguration sessionConfig = new SessionConfiguration(sessionType, outputs, cameraExecutor, new CameraCaptureSession.StateCallback() {
+            @Override
+            public void onConfigured(CameraCaptureSession session) {
+                future.complete(session);
+            }
+
+            @Override
+            public void onConfigureFailed(CameraCaptureSession session) {
+                future.completeExceptionally(new CameraAccessException(CameraAccessException.CAMERA_ERROR));
+            }
+        });
+
+        camera.createCaptureSession(sessionConfig);
+
+        try {
+            return future.get();
+        } catch (ExecutionException e) {
+            throw (CameraAccessException) e.getCause();
+        }
+    }
+
+    @TargetApi(AndroidVersions.API_31_ANDROID_12)
+    private void setRepeatingRequest(CameraCaptureSession session, CaptureRequest request) throws CameraAccessException, InterruptedException {
         CameraCaptureSession.CaptureCallback callback = new CameraCaptureSession.CaptureCallback() {
             @Override
             public void onCaptureStarted(CameraCaptureSession session, CaptureRequest request, long timestamp, long frameNumber) {
@@ -460,28 +456,32 @@ public class CameraCapture extends SurfaceCapture {
         return disconnected.get();
     }
 
+    @Override
+    public void requestInvalidate() {
+        invalidate();
+    }
+
     public void setTorchEnabled(boolean enabled) {
         cameraHandler.post(() -> {
-            assertCameraThread();
             if (currentSession != null && requestBuilder != null) {
                 try {
                     Ln.i("Turn camera torch " + (enabled ? "on" : "off"));
-                    requestBuilder.set(CaptureRequest.FLASH_MODE, enabled ? CaptureRequest.FLASH_MODE_TORCH : CaptureRequest.FLASH_MODE_OFF);
+                    requestBuilder.set(CaptureRequest.FLASH_MODE,
+                            enabled ? CaptureRequest.FLASH_MODE_TORCH
+                                    : CaptureRequest.FLASH_MODE_OFF);
                     CaptureRequest request = requestBuilder.build();
                     setRepeatingRequest(currentSession, request);
-                } catch (CameraAccessException e) {
+                } catch (CameraAccessException | InterruptedException e) {
                     Ln.e("Camera error", e);
                 }
             }
         });
     }
 
-    @TargetApi(AndroidVersions.API_30_ANDROID_11)
     private void zoom(boolean in) {
         cameraHandler.post(() -> {
-            assertCameraThread();
             if (currentSession != null && requestBuilder != null) {
-                // Always align to log values
+                // Always align to log values.
                 double z = Math.round(Math.log(zoom) / Math.log(ZOOM_FACTOR));
                 double dir = in ? 1 : -1;
                 zoom = (float) Math.pow(ZOOM_FACTOR, z + dir);
@@ -492,7 +492,7 @@ public class CameraCapture extends SurfaceCapture {
                     requestBuilder.set(CaptureRequest.CONTROL_ZOOM_RATIO, zoom);
                     CaptureRequest request = requestBuilder.build();
                     setRepeatingRequest(currentSession, request);
-                } catch (CameraAccessException e) {
+                } catch (CameraAccessException | InterruptedException e) {
                     Ln.e("Camera error", e);
                 }
             }
@@ -508,15 +508,9 @@ public class CameraCapture extends SurfaceCapture {
     }
 
     private float clampZoom(float value) {
-        assertCameraThread();
         if (zoomRange == null) {
             return value;
         }
-
         return zoomRange.clamp(value);
-    }
-
-    private void assertCameraThread() {
-        assert Thread.currentThread() == cameraThread;
     }
 }

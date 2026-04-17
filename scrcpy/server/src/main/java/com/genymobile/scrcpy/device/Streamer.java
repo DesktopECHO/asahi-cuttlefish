@@ -20,7 +20,7 @@ public final class Streamer {
 
     private final FileDescriptor fd;
     private final Codec codec;
-    private final boolean sendStreamMeta;
+    private final boolean sendCodecMeta;
     private final boolean sendFrameMeta;
 
     private final ByteBuffer headerBuffer = ByteBuffer.allocate(12);
@@ -28,7 +28,7 @@ public final class Streamer {
     public Streamer(FileDescriptor fd, Codec codec, boolean sendCodecMeta, boolean sendFrameMeta) {
         this.fd = fd;
         this.codec = codec;
-        this.sendStreamMeta = sendCodecMeta;
+        this.sendCodecMeta = sendCodecMeta;
         this.sendFrameMeta = sendFrameMeta;
     }
 
@@ -37,7 +37,7 @@ public final class Streamer {
     }
 
     public void writeAudioHeader() throws IOException {
-        if (sendStreamMeta) {
+        if (sendCodecMeta) {
             ByteBuffer buffer = ByteBuffer.allocate(4);
             buffer.putInt(codec.getId());
             buffer.flip();
@@ -45,12 +45,30 @@ public final class Streamer {
         }
     }
 
-    public void writeVideoHeader() throws IOException {
-        if (sendStreamMeta) {
+    public void writeVideoHeader(Size videoSize) throws IOException {
+        if (sendCodecMeta) {
             ByteBuffer buffer = ByteBuffer.allocate(4);
             buffer.putInt(codec.getId());
             buffer.flip();
             IO.writeFully(fd, buffer);
+        }
+
+        writeSessionMeta(videoSize.getWidth(), videoSize.getHeight(), false);
+    }
+
+    public void writeSessionMeta(int width, int height, boolean clientResize) throws IOException {
+        if (sendCodecMeta) {
+            headerBuffer.clear();
+
+            int flags = (int) (PACKET_FLAG_SESSION >> 32);
+            if (clientResize) {
+                flags |= 1;
+            }
+            headerBuffer.putInt(flags);
+            headerBuffer.putInt(width);
+            headerBuffer.putInt(height);
+            headerBuffer.flip();
+            IO.writeFully(fd, headerBuffer);
         }
     }
 
@@ -86,18 +104,6 @@ public final class Streamer {
         boolean config = (bufferInfo.flags & MediaCodec.BUFFER_FLAG_CODEC_CONFIG) != 0;
         boolean keyFrame = (bufferInfo.flags & MediaCodec.BUFFER_FLAG_KEY_FRAME) != 0;
         writePacket(codecBuffer, pts, config, keyFrame);
-    }
-
-    public void writeSessionMeta(int width, int height) throws IOException {
-        if (sendStreamMeta) {
-            headerBuffer.clear();
-
-            headerBuffer.putInt((int) (PACKET_FLAG_SESSION >> 32)); // Set the first bit to 1
-            headerBuffer.putInt(width);
-            headerBuffer.putInt(height);
-            headerBuffer.flip();
-            IO.writeFully(fd, headerBuffer);
-        }
     }
 
     private void writeFrameMeta(FileDescriptor fd, int packetSize, long pts, boolean config, boolean keyFrame) throws IOException {

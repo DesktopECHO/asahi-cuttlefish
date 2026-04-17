@@ -30,6 +30,7 @@ public class ScreenCapture extends SurfaceCapture {
     private final VirtualDisplayListener vdListener;
     private final int displayId;
     private int maxSize;
+    private final int minSizeAlignment;
     private final Rect crop;
     private Orientation.Lock captureOrientationLock;
     private Orientation captureOrientation;
@@ -51,6 +52,7 @@ public class ScreenCapture extends SurfaceCapture {
         this.displayId = options.getDisplayId();
         assert displayId != Device.DISPLAY_ID_NONE;
         this.maxSize = options.getMaxSize();
+        this.minSizeAlignment = options.getMinSizeAlignment();
         this.crop = options.getCrop();
         this.captureOrientationLock = options.getCaptureOrientationLock();
         this.captureOrientation = options.getCaptureOrientation();
@@ -193,6 +195,10 @@ public class ScreenCapture extends SurfaceCapture {
         return true;
     }
 
+    private int getAlignment() {
+        return Math.max(8, minSizeAlignment);
+    }
+
     private static IBinder createDisplay() throws Exception {
         // Since Android 12 (preview), secure displays could not be created with shell permissions anymore.
         // On Android 12 preview, SDK_INT is still R (not S), but CODENAME is "S".
@@ -210,5 +216,10 @@ public class ScreenCapture extends SurfaceCapture {
         } finally {
             SurfaceControl.closeTransaction();
         }
+    }
+
+    @Override
+    public void requestInvalidate() {
+        invalidate();
     }
 }

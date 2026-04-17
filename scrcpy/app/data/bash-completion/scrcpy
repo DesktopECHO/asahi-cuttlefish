@@ -52,11 +52,12 @@ _scrcpy() {
         -N --no-playback
         --new-display
         --new-display=
+        --adaptive-primary-display
+        --adaptive-primary-display=
         --no-audio
         --no-audio-playback
         --no-cleanup
         --no-clipboard-autosync
-        --no-downsize-on-error
         --no-key-repeat
         --no-mipmaps
         --no-mouse-hover
@@ -65,6 +66,8 @@ _scrcpy() {
         --no-vd-system-decorations
         --no-video
         --no-video-playback
+        --no-window
+        --no-window-aspect-ratio-lock
         --orientation=
         --otg
         -p --port=
@@ -79,8 +82,8 @@ _scrcpy() {
         --record-format=
         --record-orientation=
         --render-driver=
+        --render-fit=
         --require-audio
-        --rotation=
         -s --serial=
         -S --turn-screen-off
         --screen-off-timeout=
@@ -107,7 +110,8 @@ _scrcpy() {
         --window-x=
         --window-y=
         --window-width=
-        --window-height="
+        --window-height=
+        -x --flex-display"
 
     _init_completion -s || return
 
@@ -176,6 +180,10 @@ _scrcpy() {
             COMPREPLY=($(compgen -W 'direct3d opengl opengles2 opengles metal software' -- "$cur"))
             return
             ;;
+        --render-fit)
+            COMPREPLY=($(compgen -W 'natural disabled' -- "$cur"))
+            return
+            ;;
         --shortcut-mod)
             # Only auto-complete a single key
             COMPREPLY=($(compgen -W 'lctrl rctrl lalt ralt lsuper rsuper' -- "$cur"))
@@ -211,6 +219,7 @@ _scrcpy() {
         |--max-fps \
         |-m|--max-size \
         |--new-display \
+        |--adaptive-primary-display \
         |-p|--port \
         |--push-target \
         |--rotation \

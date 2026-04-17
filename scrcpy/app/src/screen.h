@@ -36,12 +36,20 @@ struct sc_screen {
 
     bool video;
     bool camera;
+    bool window_aspect_ratio_lock;
+    bool flex_display;
+
+    struct sc_controller *controller;
 
     struct sc_texture tex;
     struct sc_input_manager im;
     struct sc_mouse_capture mc; // only used in mouse relative mode
-    struct sc_frame_buffer fb;
     struct sc_fps_counter fps_counter;
+
+    struct sc_mutex mutex;
+    struct sc_frame_buffer fb; // protected by mutex
+    // When true, a frame size change must not cause the window to be resized
+    bool prevent_auto_resize; // protected by mutex
 
     // The initial requested window properties
     struct {
@@ -59,6 +67,8 @@ struct sc_screen {
     SDL_GLContext gl_context;
 #endif
 
+    enum sc_render_fit render_fit;
+
     struct sc_size frame_size;
     struct sc_size content_size; // rotated frame_size
 
@@ -73,27 +83,13 @@ struct sc_screen {
     struct SDL_FRect rect;
     bool window_shown;
 
+    // only accessed from the thread calling sc_frame_sink_ops functions
+    struct sc_stream_session current_session;
+
     AVFrame *frame;
 
     bool paused;
     AVFrame *resume_frame;
-
-    bool new_display;
-    bool adaptive_new_display;
-    bool adaptive_primary_display;
-    bool vd_resize_pending;
-    bool vd_resize_enabled;
-    bool vd_initial_resize_sent;
-    struct sc_size vd_last_sent_size;
-    struct sc_size vd_last_windowed_size;
-    bool vd_last_sent_valid;
-    bool vd_last_windowed_size_valid;
-    bool vd_restoring_windowed_size;
-    uint16_t vd_last_sent_dpi;
-    uint16_t vd_fixed_dpi;
-    uint64_t vd_resize_deadline_ns;
-    uint64_t vd_stretch_deadline_ns;
-    double vd_scale;
 
     bool disconnected;
     bool disconnect_started;
@@ -103,6 +99,7 @@ struct sc_screen {
 struct sc_screen_params {
     bool video;
     bool camera;
+    bool flex_display;
 
     struct sc_controller *controller;
     struct sc_file_pusher *fp;
@@ -123,18 +120,15 @@ struct sc_screen_params {
     uint16_t window_width;
     uint16_t window_height;
 
+    bool window_aspect_ratio_lock;
     bool window_borderless;
 
+    enum sc_render_fit render_fit;
     enum sc_orientation orientation;
     bool mipmaps;
 
     bool fullscreen;
     bool start_fps_counter;
-    bool new_display;
-    bool adaptive_new_display;
-    bool adaptive_primary_display;
-    double adaptive_scale;
-    uint16_t adaptive_dpi;
 };
 
 // initialize screen, create window, renderer and texture (window is hidden)
@@ -165,7 +159,7 @@ sc_screen_hide_window(struct sc_screen *screen);
 void
 sc_screen_toggle_fullscreen(struct sc_screen *screen);
 
-// toggle window decorations/titlebar
+// toggle window decorations
 void
 sc_screen_toggle_window_bordered(struct sc_screen *screen);
 

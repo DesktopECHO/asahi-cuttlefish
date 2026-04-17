@@ -121,6 +121,48 @@ static void test_options2(void) {
     assert(opts->record_format == SC_RECORD_FORMAT_MP4);
 }
 
+static void test_adaptive_primary_display(void) {
+    struct scrcpy_cli_args args = {
+        .opts = scrcpy_options_default,
+        .help = false,
+        .version = false,
+    };
+
+    char *argv[] = {
+        "scrcpy",
+        "--adaptive-primary-display=240",
+    };
+
+    bool ok = scrcpy_parse_args(&args, ARRAY_LEN(argv), argv);
+    assert(ok);
+
+    const struct scrcpy_options *opts = &args.opts;
+    assert(opts->adaptive_primary_display);
+    assert(opts->adaptive_primary_display_dpi == 240);
+    assert(opts->flex_display);
+}
+
+static void test_adaptive_primary_display_without_dpi(void) {
+    struct scrcpy_cli_args args = {
+        .opts = scrcpy_options_default,
+        .help = false,
+        .version = false,
+    };
+
+    char *argv[] = {
+        "scrcpy",
+        "--adaptive-primary-display",
+    };
+
+    bool ok = scrcpy_parse_args(&args, ARRAY_LEN(argv), argv);
+    assert(ok);
+
+    const struct scrcpy_options *opts = &args.opts;
+    assert(opts->adaptive_primary_display);
+    assert(opts->adaptive_primary_display_dpi == 0);
+    assert(opts->flex_display);
+}
+
 static void test_parse_shortcut_mods(void) {
     uint8_t mods;
     bool ok;
@@ -157,6 +199,8 @@ int main(int argc, char *argv[]) {
     test_flag_help();
     test_options();
     test_options2();
+    test_adaptive_primary_display();
+    test_adaptive_primary_display_without_dpi();
     test_parse_shortcut_mods();
     return 0;
 }

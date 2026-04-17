@@ -50,8 +50,6 @@ public class ControlMessageReader {
             case ControlMessage.TYPE_CAMERA_ZOOM_IN:
             case ControlMessage.TYPE_CAMERA_ZOOM_OUT:
                 return ControlMessage.createEmpty(type);
-            case ControlMessage.TYPE_SET_DISPLAY_SIZE:
-                return parseSetDisplaySize();
             case ControlMessage.TYPE_UHID_CREATE:
                 return parseUhidCreate();
             case ControlMessage.TYPE_UHID_INPUT:
@@ -62,6 +60,8 @@ public class ControlMessageReader {
                 return parseStartApp();
             case ControlMessage.TYPE_CAMERA_SET_TORCH:
                 return parseCameraSetTorch();
+            case ControlMessage.TYPE_RESIZE_DISPLAY:
+                return parseResizeDisplay();
             default:
                 throw new ControlProtocolException("Unknown event type: " + type);
         }
@@ -147,13 +147,6 @@ public class ControlMessageReader {
         return ControlMessage.createSetDisplayPower(on);
     }
 
-    private ControlMessage parseSetDisplaySize() throws IOException {
-        int width = dis.readUnsignedShort();
-        int height = dis.readUnsignedShort();
-        int dpi = dis.readUnsignedShort();
-        return ControlMessage.createSetDisplaySize(width, height, dpi);
-    }
-
     private ControlMessage parseUhidCreate() throws IOException {
         int id = dis.readUnsignedShort();
         int vendorId = dis.readUnsignedShort();
@@ -182,6 +175,12 @@ public class ControlMessageReader {
     private ControlMessage parseCameraSetTorch() throws IOException {
         boolean on = dis.readBoolean();
         return ControlMessage.createCameraSetTorch(on);
+    }
+
+    private ControlMessage parseResizeDisplay() throws IOException {
+        int width = dis.readUnsignedShort();
+        int height = dis.readUnsignedShort();
+        return ControlMessage.createResizeDisplay(width, height);
     }
 
     private Position parsePosition() throws IOException {

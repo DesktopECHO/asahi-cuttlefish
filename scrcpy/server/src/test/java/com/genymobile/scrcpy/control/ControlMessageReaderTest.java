@@ -423,23 +423,21 @@ public class ControlMessageReaderTest {
     }
 
     @Test
-    public void testParseSetDisplaySize() throws IOException {
+    public void testParseResizeDisplay() throws IOException {
         ByteArrayOutputStream bos = new ByteArrayOutputStream();
         DataOutputStream dos = new DataOutputStream(bos);
-        dos.writeByte(ControlMessage.TYPE_SET_DISPLAY_SIZE);
+        dos.writeByte(ControlMessage.TYPE_RESIZE_DISPLAY);
         dos.writeShort(1920);
         dos.writeShort(1080);
-        dos.writeShort(240);
         byte[] packet = bos.toByteArray();
 
         ByteArrayInputStream bis = new ByteArrayInputStream(packet);
         ControlMessageReader reader = new ControlMessageReader(bis);
 
         ControlMessage event = reader.read();
-        Assert.assertEquals(ControlMessage.TYPE_SET_DISPLAY_SIZE, event.getType());
-        Assert.assertEquals(1920, event.getDisplayWidth());
-        Assert.assertEquals(1080, event.getDisplayHeight());
-        Assert.assertEquals(240, event.getDisplayDpi());
+        Assert.assertEquals(ControlMessage.TYPE_RESIZE_DISPLAY, event.getType());
+        Assert.assertEquals(1920, event.getWidth());
+        Assert.assertEquals(1080, event.getHeight());
 
         Assert.assertEquals(-1, bis.read()); // EOS
     }

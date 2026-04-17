@@ -30,13 +30,13 @@ the following files to a directory accessible from your `PATH`:
 
 It is also available in scrcpy releases.
 
-The client requires [FFmpeg] and [SDL]. Just follow the instructions.
+The client requires [FFmpeg] and [LibSDL2]. Just follow the instructions.
 
 [adb]: https://developer.android.com/studio/command-line/adb.html
 [platform-tools]: https://developer.android.com/studio/releases/platform-tools.html
 [platform-tools-windows]: https://dl.google.com/android/repository/platform-tools-latest-windows.zip
 [ffmpeg]: https://en.wikipedia.org/wiki/FFmpeg
-[SDL]: https://en.wikipedia.org/wiki/Simple_DirectMedia_Layer
+[LibSDL2]: https://en.wikipedia.org/wiki/Simple_DirectMedia_Layer
 
 
 
@@ -50,10 +50,10 @@ Install the required packages from your package manager.
 
 ```bash
 # runtime dependencies
-sudo apt install ffmpeg libsdl3-0 adb libusb-1.0-0
+sudo apt install ffmpeg libsdl2-2.0-0 adb libusb-1.0-0
 
 # client build dependencies
-sudo apt install gcc git pkg-config meson ninja-build libsdl3-dev \
+sudo apt install gcc git pkg-config meson ninja-build libsdl2-dev \
                  libavcodec-dev libavdevice-dev libavformat-dev libavutil-dev \
                  libswresample-dev libusb-1.0-0-dev
 
@@ -77,7 +77,7 @@ pip3 install meson
 sudo dnf install https://download1.rpmfusion.org/free/fedora/rpmfusion-free-release-$(rpm -E %fedora).noarch.rpm
 
 # client build dependencies
-sudo dnf install SDL3-devel ffms2-devel libusb1-devel libavdevice-free-devel meson gcc make
+sudo dnf install SDL2-devel ffms2-devel libusb1-devel libavdevice-free-devel meson gcc make
 
 # server build dependencies
 sudo dnf install java-devel
@@ -121,7 +121,7 @@ install the required packages:
 
 ```bash
 # runtime dependencies
-pacman -S mingw-w64-x86_64-sdl3 \
+pacman -S mingw-w64-x86_64-SDL2 \
           mingw-w64-x86_64-ffmpeg \
           mingw-w64-x86_64-libusb
 
@@ -136,7 +136,7 @@ For a 32 bits version, replace `x86_64` by `i686`:
 
 ```bash
 # runtime dependencies
-pacman -S mingw-w64-i686-sdl3 \
+pacman -S mingw-w64-i686-SDL2 \
           mingw-w64-i686-ffmpeg \
           mingw-w64-i686-libusb
 
@@ -162,7 +162,7 @@ Install the packages with [Homebrew]:
 
 ```bash
 # runtime dependencies
-brew install sdl3 ffmpeg libusb
+brew install sdl2 ffmpeg libusb
 
 # client build dependencies
 brew install pkg-config meson
@@ -172,8 +172,7 @@ Additionally, if you want to build the server, install Java 17 from Caskroom, an
 make it available from the `PATH`:
 
 ```bash
-brew tap homebrew/cask-versions
-brew install adoptopenjdk/openjdk/adoptopenjdk17
+brew install openjdk@17
 export JAVA_HOME="$(/usr/libexec/java_home --version 1.17)"
 export PATH="$JAVA_HOME/bin:$PATH"
 ```

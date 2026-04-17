@@ -58,11 +58,11 @@ arguments=(
     {-n,--no-control}'[Disable device control \(mirror the device in read only\)]'
     {-N,--no-playback}'[Disable video and audio playback]'
     '--new-display=[Create a new display]'
+    '--adaptive-primary-display=[Resize primary display with optional fixed DPI]'
     '--no-audio[Disable audio forwarding]'
     '--no-audio-playback[Disable audio playback]'
     '--no-cleanup[Disable device cleanup actions on exit]'
     '--no-clipboard-autosync[Disable automatic clipboard synchronization]'
-    '--no-downsize-on-error[Disable lowering definition on MediaCodec error]'
     '--no-key-repeat[Do not forward repeated key events when a key is held down]'
     '--no-mipmaps[Disable the generation of mipmaps]'
     '--no-mouse-hover[Do not forward mouse hover events]'
@@ -71,6 +71,8 @@ arguments=(
     '--no-vd-system-decorations[Disable virtual display system decorations flag]'
     '--no-video[Disable video forwarding]'
     '--no-video-playback[Disable video playback]'
+    '--no-window[Disable scrcpy window]'
+    '--no-window-aspect-ratio-lock[Disable window aspect ratio lock]'
     '--orientation=[Set the video orientation]:orientation values:(0 90 180 270 flip0 flip90 flip180 flip270)'
     '--otg[Run in OTG mode \(simulating physical keyboard and mouse\)]'
     {-p,--port=}'[\[port\[\:port\]\] Set the TCP port \(range\) used by the client to listen]'
@@ -84,6 +86,7 @@ arguments=(
     '--record-format=[Force recording format]:format:(mp4 mkv m4a mka opus aac flac wav)'
     '--record-orientation=[Set the record orientation]:orientation values:(0 90 180 270)'
     '--render-driver=[Request SDL to use the given render driver]:driver name:(direct3d opengl opengles2 opengles metal software)'
+    '--render-fit=[Set the render fit mode]:render fit:(natural disabled)'
     '--require-audio=[Make scrcpy fail if audio is enabled but does not work]'
     {-s,--serial=}'[The device serial number \(mandatory for multiple devices only\)]:serial:($("${ADB-adb}" devices | awk '\''$2 == "device" {print $1}'\''))'
     {-S,--turn-screen-off}'[Turn the device screen off immediately]'
@@ -111,6 +114,7 @@ arguments=(
     '--window-y=[Set the initial window vertical position]'
     '--window-width=[Set the initial window width]'
     '--window-height=[Set the initial window height]'
+    {-x,--flex-display}'[Continuously resize the virtual display to match the window]'
 )
 
 _arguments -s $arguments

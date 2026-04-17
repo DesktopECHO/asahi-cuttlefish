@@ -72,30 +72,16 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-        # Same as build-linux-x86_64
       - name: Install dependencies
         run: |
           sudo apt update
-          sudo apt install -y meson ninja-build nasm ffmpeg libavcodec-dev \
-             libavdevice-dev libavformat-dev libavutil-dev libswresample-dev \
-             libusb-1.0-0 libusb-1.0-0-dev libv4l-dev \
-             libasound2-dev libpulse-dev \
-             libaudio-dev libfribidi-dev libjack-dev libsndio-dev libx11-dev libxext-dev \
-             libxrandr-dev libxcursor-dev libxfixes-dev libxi-dev libxss-dev libxtst-dev \
-             libxkbcommon-dev libdrm-dev libgbm-dev libgl1-mesa-dev libgles2-mesa-dev \
-             libegl1-mesa-dev libdbus-1-dev libibus-1.0-dev libudev-dev libthai-dev \
-             libpipewire-0.3-dev libwayland-dev libdecor-0-dev liburing-dev
-
-        # SDL3 is not available in Ubuntu yet
-      - name: Install SDL3
-        run: |
-          app/deps/sdl.sh linux native shared
+          sudo apt install -y meson ninja-build nasm ffmpeg libsdl2-2.0-0 \
+             libsdl2-dev libavcodec-dev libavdevice-dev libavformat-dev \
+             libavutil-dev libswresample-dev libusb-1.0-0 libusb-1.0-0-dev \
+             libv4l-dev
 
       - name: Test
-        run: |
-          export PKG_CONFIG_PATH="$PWD"/app/deps/work/install/linux-native-shared/lib/pkgconfig
-          export LD_LIBRARY_PATH="$PWD"/app/deps/work/install/linux-native-shared/lib
-          release/test_client.sh
+        run: release/test_client.sh
 
   build-linux-x86_64:
     runs-on: ubuntu-22.04
@@ -112,19 +98,13 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-        # https://wiki.libsdl.org/SDL3/README-linux#build-dependencies
       - name: Install dependencies
         run: |
           sudo apt update
-          sudo apt install -y meson ninja-build nasm ffmpeg libavcodec-dev \
-             libavdevice-dev libavformat-dev libavutil-dev libswresample-dev \
-             libusb-1.0-0 libusb-1.0-0-dev libv4l-dev \
-             libasound2-dev libpulse-dev \
-             libaudio-dev libfribidi-dev libjack-dev libsndio-dev libx11-dev libxext-dev \
-             libxrandr-dev libxcursor-dev libxfixes-dev libxi-dev libxss-dev libxtst-dev \
-             libxkbcommon-dev libdrm-dev libgbm-dev libgl1-mesa-dev libgles2-mesa-dev \
-             libegl1-mesa-dev libdbus-1-dev libibus-1.0-dev libudev-dev libthai-dev \
-             libpipewire-0.3-dev libwayland-dev libdecor-0-dev liburing-dev
+          sudo apt install -y meson ninja-build nasm ffmpeg libsdl2-2.0-0 \
+             libsdl2-dev libavcodec-dev libavdevice-dev libavformat-dev \
+             libavutil-dev libswresample-dev libusb-1.0-0 libusb-1.0-0-dev \
+             libv4l-dev
 
       - name: Build
         run: release/build_linux.sh x86_64
@@ -152,7 +132,9 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt update
-          sudo apt install -y meson ninja-build nasm \
+          sudo apt install -y meson ninja-build nasm ffmpeg libsdl2-2.0-0 \
+             libsdl2-dev libavcodec-dev libavdevice-dev libavformat-dev \
+             libavutil-dev libswresample-dev libusb-1.0-0 libusb-1.0-0-dev \
              mingw-w64 mingw-w64-tools libz-mingw-w64-dev
 
       - name: Build
@@ -181,7 +163,9 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt update
-          sudo apt install -y meson ninja-build nasm \
+          sudo apt install -y meson ninja-build nasm ffmpeg libsdl2-2.0-0 \
+             libsdl2-dev libavcodec-dev libavdevice-dev libavformat-dev \
+             libavutil-dev libswresample-dev libusb-1.0-0 libusb-1.0-0-dev \
              mingw-w64 mingw-w64-tools libz-mingw-w64-dev
 
       - name: Build

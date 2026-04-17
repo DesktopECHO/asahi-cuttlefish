@@ -58,10 +58,6 @@ _<kbd>[Super]</kbd> is typically the <kbd>Windows</kbd> or <kbd>Cmd</kbd> key._
  | Tilt horizontally (slide with 2 fingers)    | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+_click-and-move_
  | Drag & drop APK file                        | Install APK from computer
  | Drag & drop non-APK file                    | [Push file to device](control.md#push-file-to-device)
- | Turn on the camera torch (camera mode only) | <kbd>MOD</kbd>+<kbd>t</kbd>
- | Turn off the camera torch (camera mode only)| <kbd>MOD</kbd>+<kbd>Shift</kbd>+<kbd>t</kbd>
- | Zoom camera in (camera mode only)           | <kbd>MOD</kbd>+<kbd>↑</kbd> _(up)_
- | Zoom camera out (camera mode only)          | <kbd>MOD</kbd>+<kbd>↓</kbd> _(down)_
 
 _¹Double-click on black borders to remove them._  
 _²Right-click turns the screen on if it was off, presses BACK otherwise._  

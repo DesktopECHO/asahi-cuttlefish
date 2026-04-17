@@ -4,7 +4,7 @@ their name contains `scrcpy`.**
 
 # scrcpy (v3.3.4)
 
-<img src="app/data/scrcpy.svg" width="128" height="128" alt="scrcpy" align="right" />
+<img src="app/data/icon.svg" width="128" height="128" alt="scrcpy" align="right" />
 
 _pronounced "**scr**een **c**o**py**"_
 
@@ -129,7 +129,7 @@ Here are just some common examples.
     scrcpy --otg
     ```
 
- - Control the device using gamepads plugged into the computer:
+ - Control the device using gamepad controllers plugged into the computer:
 
     ```bash
     scrcpy --gamepad=uhid
@@ -210,7 +210,7 @@ work][donate]:
 ## License
 
     Copyright (C) 2018 Genymobile
-    Copyright (C) 2018-2025 Romain Vimont
+    Copyright (C) 2018-2026 Romain Vimont
 
     Licensed under the Apache License, Version 2.0 (the "License");
     you may not use this file except in compliance with the License.

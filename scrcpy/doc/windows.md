@@ -72,6 +72,18 @@ Documentation for command line arguments is available:
  - `scrcpy --help`
  - on [github](/README.md)
 
+To start scrcpy directly without opening a terminal, double-click on one of
+these files:
+ - `scrcpy-console.bat`: start with a terminal open (it will close when scrcpy
+   terminates, unless an error occurs);
+ - `scrcpy-noconsole.vbs`: start without a terminal (but you won't see any error
+   message).
+
+_Avoid double-clicking on `scrcpy.exe` directly: on error, the terminal would
+close immediately and you won't have time to read any error message (this
+executable is intended to be run from the terminal). Use `scrcpy-console.bat`
+instead._
+
 If you plan to always use the same arguments, create a file `myscrcpy.bat`
 (enable [show file extensions] to avoid confusion) containing your command, For
 example:
@@ -80,17 +92,9 @@ example:
 scrcpy --prefer-text --turn-screen-off --stay-awake
 ```
 
-Add `--pause-on-exit=if-error` if you want the console to remain open when
-scrcpy fails:
-
-```bash
-scrcpy --prefer-text --turn-screen-off --stay-awake --pause-on-exit=if-error
-```
-
 [show file extensions]: https://www.howtogeek.com/205086/beginner-how-to-make-windows-show-file-extensions/
 
-Then just double-click on that file to run it.
+Then just double-click on that file.
 
-To start scrcpy without opening a terminal, double-click `scrcpy-noconsole.vbs`
-(note that errors won't be shown). To pass arguments, edit (a copy of)
-`scrcpy-noconsole.vbs` and add the desired arguments.
+You could also edit (a copy of) `scrcpy-console.bat` or `scrcpy-noconsole.vbs`
+to add some arguments.

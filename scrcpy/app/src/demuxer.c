@@ -77,9 +77,9 @@ sc_demuxer_recv_header(struct sc_demuxer *demuxer,
     //
     //  byte 0   byte 1   byte 2   byte 3
     // 10000000 00000000 00000000 00000000
-    // ^<-------------------------------->
-    // |               padding
-    //  `- session packet flag
+    // ^<------------------------------->^
+    // |               padding           |
+    //  `- session packet flag            `- client resized
     //
     //  byte 4   byte 5   byte 6   byte 7   byte 8   byte 9   byte 10  byte 11
     // ........ ........ ........ ........ ........ ........ ........ ........
@@ -126,6 +126,7 @@ sc_demuxer_parse_session(const uint8_t *header,
     assert(sc_demuxer_is_session(header));
     session->video.width = sc_read32be(&header[4]);
     session->video.height = sc_read32be(&header[8]);
+    session->video.client_resized = header[3] & 1;
 }
 
 static bool
@@ -134,7 +135,10 @@ sc_demuxer_recv_packet(struct sc_demuxer *demuxer, const uint8_t *header,
     assert(!sc_demuxer_is_session(header));
     uint64_t pts_flags = sc_read64be(header);
     uint32_t len = sc_read32be(&header[8]);
-    assert(len);
+    if (!len) {
+        LOGE("Invalid packet length: 0");
+        return false;
+    }
 
     if (av_new_packet(packet, len)) {
         LOG_OOM();
@@ -296,7 +300,10 @@ run_demuxer(void *data) {
                 break;
             }
         } else {
-            sc_demuxer_recv_packet(demuxer, header, packet);
+            bool ok = sc_demuxer_recv_packet(demuxer, header, packet);
+            if (!ok) {
+                break;
+            }
 
             if (must_merge_config_packet) {
                 // Prepend any config packet to the next media packet

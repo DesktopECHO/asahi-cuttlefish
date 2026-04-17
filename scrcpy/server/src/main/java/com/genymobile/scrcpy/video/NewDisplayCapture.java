@@ -50,6 +50,7 @@ public class NewDisplayCapture extends SurfaceCapture {
     private Size mainDisplaySize;
     private int mainDisplayDpi;
     private int maxSize;
+    private final int minSizeAlignment;
     private int displayImePolicy;
     private final Rect crop;
     private final boolean captureOrientationLocked;
@@ -73,6 +74,7 @@ public class NewDisplayCapture extends SurfaceCapture {
         this.newDisplay = options.getNewDisplay();
         assert newDisplay != null;
         this.maxSize = options.getMaxSize();
+        this.minSizeAlignment = options.getMinSizeAlignment();
         this.displayImePolicy = options.getDisplayImePolicy();
         this.crop = options.getCrop();
         assert options.getCaptureOrientationLock() != null;
@@ -88,6 +90,8 @@ public class NewDisplayCapture extends SurfaceCapture {
     protected void init() {
         displaySize = newDisplay.getSize();
         dpi = newDisplay.getDpi();
+        requestedDisplaySize = displaySize;
+        requestedDpi = dpi;
         if (displaySize == null || dpi == 0) {
             DisplayInfo displayInfo = ServiceManager.getDisplayManager().getDisplayInfo(0);
             if (displayInfo != null) {
@@ -108,20 +112,17 @@ public class NewDisplayCapture extends SurfaceCapture {
     public void prepare() {
         int displayRotation;
         if (virtualDisplay == null) {
-            if (hasRequestedSize && requestedDisplaySize != null) {
+            if (hasRequestedSize) {
                 displaySize = requestedDisplaySize;
-                if (requestedDpi != 0) {
-                    dpi = requestedDpi;
-                } else {
-                    dpi = scaleDpi(mainDisplaySize, mainDisplayDpi, displaySize);
-                }
-            } else {
-                if (!newDisplay.hasExplicitSize()) {
+                dpi = requestedDpi;
+            }
+            if (!newDisplay.hasExplicitSize()) {
+                if (displaySize == null) {
                     displaySize = mainDisplaySize;
                 }
-                if (!newDisplay.hasExplicitDpi()) {
-                    dpi = scaleDpi(mainDisplaySize, mainDisplayDpi, displaySize);
-                }
+            }
+            if (!newDisplay.hasExplicitDpi()) {
+                dpi = scaleDpi(mainDisplaySize, mainDisplayDpi, displaySize);
             }
 
             videoSize = displaySize;
@@ -145,13 +146,13 @@ public class NewDisplayCapture extends SurfaceCapture {
         filter.addOrientation(displayRotation, captureOrientationLocked, captureOrientation);
         filter.addAngle(angle);
 
-        int alignment = getAlignment();
         Size filteredSize = filter.getOutputSize();
-        if (!filteredSize.isMultipleOf(alignment) || (maxSize != 0 && filteredSize.getMax() > maxSize)) {
+        if (!filteredSize.isMultipleOf(getAlignment())
+                || (maxSize != 0 && filteredSize.getMax() > maxSize)) {
             if (maxSize != 0) {
                 filteredSize = filteredSize.limit(maxSize);
             }
-            filteredSize = filteredSize.round(alignment);
+            filteredSize = filteredSize.round(getAlignment());
             filter.addResize(filteredSize);
         }
 
@@ -269,10 +270,8 @@ public class NewDisplayCapture extends SurfaceCapture {
         return true;
     }
 
-    private static int scaleDpi(Size initialSize, int initialDpi, Size size) {
-        int den = initialSize.getMax();
-        int num = size.getMax();
-        return initialDpi * num / den;
+    private int getAlignment() {
+        return Math.max(8, minSizeAlignment);
     }
 
     public synchronized void setDisplaySize(int width, int height, int dpi) {
@@ -302,6 +301,17 @@ public class NewDisplayCapture extends SurfaceCapture {
             }
         }
 
+        invalidate();
+    }
+
+    private static int scaleDpi(Size initialSize, int initialDpi, Size size) {
+        int den = initialSize.getMax();
+        int num = size.getMax();
+        return initialDpi * num / den;
+    }
+
+    @Override
+    public void requestInvalidate() {
         invalidate();
     }
 }

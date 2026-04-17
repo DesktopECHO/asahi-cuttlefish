@@ -52,17 +52,17 @@ struct sc_server_params {
     bool control;
     uint32_t display_id;
     const char *new_display;
-    bool adaptive_primary_display;
     enum sc_display_ime_policy display_ime_policy;
     bool video;
     bool audio;
     bool audio_dup;
     bool show_touches;
     bool stay_awake;
+    bool adaptive_primary_display;
+    uint16_t adaptive_primary_display_dpi;
     bool force_adb_forward;
     bool power_off_on_close;
     bool clipboard_autosync;
-    bool downsize_on_error;
     bool tcpip;
     const char *tcpip_dst;
     bool select_usb;
@@ -74,6 +74,7 @@ struct sc_server_params {
     bool camera_torch;
     bool vd_destroy_content;
     bool vd_system_decorations;
+    bool flex_display;
     uint8_t list;
 };
 
