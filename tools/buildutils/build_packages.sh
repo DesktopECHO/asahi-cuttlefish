@@ -80,6 +80,7 @@ function install_rpm_build_dependencies() {
     libsrtp-devel \
     opus-devel \
     openssl-devel \
+    perl-FindBin \
     pkgconf-pkg-config \
     protobuf-c-devel \
     protobuf-compiler \

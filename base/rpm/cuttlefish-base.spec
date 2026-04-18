@@ -28,6 +28,7 @@ BuildRequires:  libsrtp-devel
 BuildRequires:  libswscale-free-devel
 BuildRequires:  opus-devel
 BuildRequires:  openssl-devel
+BuildRequires:  perl-FindBin
 BuildRequires:  pkgconf-pkg-config
 BuildRequires:  protobuf-c-devel
 BuildRequires:  protobuf-compiler
