@@ -50,6 +50,31 @@ meson compile -C _build_scrcpy
 rm -rf %{buildroot}
 DESTDIR=%{buildroot} meson install -C _build_scrcpy
 
+install -d %{buildroot}/usr/share/applications
+install -d %{buildroot}/usr/share/icons/hicolor/256x256/apps
+
+install -m 0644 \
+  %{buildroot}/usr/lib/cuttlefish-common/share/applications/scrcpy.desktop \
+  %{buildroot}/usr/share/applications/ika-scrcpy.desktop
+install -m 0644 \
+  %{buildroot}/usr/lib/cuttlefish-common/share/applications/scrcpy-console.desktop \
+  %{buildroot}/usr/share/applications/ika-scrcpy-console.desktop
+install -m 0644 \
+  %{buildroot}/usr/lib/cuttlefish-common/share/icons/hicolor/256x256/apps/scrcpy.png \
+  %{buildroot}/usr/share/icons/hicolor/256x256/apps/ika-scrcpy.png
+
+sed -i \
+  -e 's#^Exec=.*#Exec=/usr/lib/cuttlefish-common/bin/scrcpy#' \
+  -e 's#^Icon=.*#Icon=ika-scrcpy#' \
+  -e '/^StartupNotify=/a StartupWMClass=scrcpy' \
+  %{buildroot}/usr/share/applications/ika-scrcpy.desktop
+
+sed -i \
+  -e "s#^Exec=.*#Exec=/usr/lib/cuttlefish-common/bin/scrcpy --pause-on-exit=if-error#" \
+  -e 's#^Icon=.*#Icon=ika-scrcpy#' \
+  -e '/^StartupNotify=/a StartupWMClass=scrcpy' \
+  %{buildroot}/usr/share/applications/ika-scrcpy-console.desktop
+
 %files
 %license scrcpy/LICENSE
 /usr/lib/cuttlefish-common/bin/scrcpy
@@ -60,6 +85,9 @@ DESTDIR=%{buildroot} meson install -C _build_scrcpy
 /usr/lib/cuttlefish-common/share/man/man1/scrcpy.1*
 /usr/lib/cuttlefish-common/share/scrcpy/scrcpy-server
 /usr/lib/cuttlefish-common/share/zsh/site-functions/_scrcpy
+/usr/share/applications/ika-scrcpy-console.desktop
+/usr/share/applications/ika-scrcpy.desktop
+/usr/share/icons/hicolor/256x256/apps/ika-scrcpy.png
 
 %changelog
 * Thu Apr 09 2026 Daniel Milisic <dmilisic@desktopecho.com> - 3.3.4-1
