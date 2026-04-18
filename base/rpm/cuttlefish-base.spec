@@ -137,26 +137,27 @@ case "%{_arch}" in
   *) echo "Unsupported architecture: %{_arch}" >&2; exit 1 ;;
 esac
 
+SOURCE_TARBALL="%{_sourcedir}/%{SOURCE0}"
+if [[ ! -f base/cvd/adb/BUILD.bazel ]]; then
+  echo "Repairing incomplete extracted source tree from ${SOURCE_TARBALL}"
+  tar -xzf "${SOURCE_TARBALL}" --strip-components=2 -C base \
+    "android-cuttlefish-%{version}/base/cvd"
+fi
+
 readonly package_output_root="base/cvd/bazel-out/${bazel_arch}-opt/bin/cuttlefish/package"
 pushd base/cvd
-# Use a local output_base so that stale Bazel repo/action caches from
-# previous builds (in ~/.cache/bazel/) cannot interfere. The rpmbuild
-# BUILD directory is cleaned between runs, guaranteeing a fresh state.
-# Place it outside the Bazel workspace (base/cvd/) to avoid glob issues.
-BAZEL_OUTPUT_BASE="$(realpath "$PWD/..")/.bazel_output"
-mkdir -p "$BAZEL_OUTPUT_BASE"
 # Keep download/build caches persistent across rpmbuild runs so external
 # repositories are fetched once and then reused on slow connections.
 BAZEL_CACHE_ROOT="${CUTTLEFISH_BAZEL_CACHE_ROOT:-${XDG_CACHE_HOME:-$HOME/.cache}/cuttlefish-bazel}"
+BAZEL_OUTPUT_USER_ROOT="${CUTTLEFISH_BAZEL_OUTPUT_USER_ROOT:-$BAZEL_CACHE_ROOT/output_user_root}"
 BAZEL_REPOSITORY_CACHE="$BAZEL_CACHE_ROOT/repository"
 BAZEL_DISK_CACHE="$BAZEL_CACHE_ROOT/disk"
 BAZEL_DISTDIR="$BAZEL_CACHE_ROOT/distdir"
-mkdir -p "$BAZEL_REPOSITORY_CACHE" "$BAZEL_DISK_CACHE" "$BAZEL_DISTDIR"
-# Point TMPDIR into the build tree so that cargo-bazel workspace splicing
-# (crate_universe) creates its temp symlinks here instead of /tmp, avoiding
-# quota-exceeded errors on size- or inode-limited filesystems.
-BAZEL_TMPDIR="$BAZEL_OUTPUT_BASE/tmp"
-mkdir -p "$BAZEL_TMPDIR"
+BAZEL_TMPDIR="${CUTTLEFISH_BAZEL_TMPDIR:-$BAZEL_CACHE_ROOT/tmp}"
+mkdir -p "$BAZEL_OUTPUT_USER_ROOT" "$BAZEL_REPOSITORY_CACHE" "$BAZEL_DISK_CACHE" "$BAZEL_DISTDIR" "$BAZEL_TMPDIR"
+# Keep Bazel's output tree and crate_universe temp workspaces out of the
+# rpmbuild BUILD directory. That directory is transient and can hit space
+# limits while external git repos are materialized.
 export TMPDIR="$BAZEL_TMPDIR"
 
 retry_count=0
@@ -165,7 +166,7 @@ retry_delay=60
 while true; do
   if ./tools/ensure_crosvm_git_mirror.sh && \
     DISABLE_BAZEL_WRAPPER=yes USE_BAZEL_VERSION=8.5.1 \
-    bazel --output_base="$BAZEL_OUTPUT_BASE" build -c opt \
+    bazel --output_user_root="$BAZEL_OUTPUT_USER_ROOT" build -c opt \
     --repository_cache="$BAZEL_REPOSITORY_CACHE" \
     --disk_cache="$BAZEL_DISK_CACHE" \
     --distdir="$BAZEL_DISTDIR" \

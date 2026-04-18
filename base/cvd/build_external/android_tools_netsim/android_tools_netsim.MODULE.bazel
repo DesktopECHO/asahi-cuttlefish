@@ -1,4 +1,8 @@
-netsim_crates = use_extension("@rules_rust//crate_universe:extensions.bzl", "crate")
+netsim_crates = use_extension(
+    "@rules_rust//crate_universe:extensions.bzl",
+    "crate",
+    isolate = True,
+)
 netsim_crates.spec(
     package = "grpcio-sys",
     version = "0.13.0",
@@ -90,8 +94,6 @@ netsim_crates.from_cargo(
     manifests = [
         "@android_tools_netsim//:rust/Cargo.toml",
     ],
-    # Needed because it shares the extension with crosvm
-    cargo_config = "@//build_external/crosvm:crosvm.config.toml",
     host_tools = "@rust_host_tools_nightly",
 )
 

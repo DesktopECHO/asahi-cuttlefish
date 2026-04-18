@@ -285,10 +285,16 @@ Result<void> WriteEnd(SharedFD out, const GptEnd& end) {
  * images.
  *
  * crosvm has read-only support for Android-Sparse files, but QEMU does not
- * support them.
+ * support them. Writable/raw aggregation paths still need sparse images to be
+ * materialized because they are copied into a raw disk image or exposed through
+ * a writable composite layout.
  */
-Result<void> DeAndroidSparse(std::vector<ImagePartition>& partitions,
-                             const std::string& output_directory) {
+Result<void> DeAndroidSparseIfNeeded(std::vector<ImagePartition>& partitions,
+                                     const std::string& output_directory,
+                                     bool read_only) {
+  if (read_only) {
+    return {};
+  }
   for (auto& partition : partitions) {
     partition.image_file_path =
         CF_EXPECT(ForceRawImage(partition.image_file_path, output_directory));
@@ -315,7 +321,9 @@ uint64_t AlignToPartitionSize(uint64_t size) {
 
 Result<void> AggregateImage(std::vector<ImagePartition> partitions,
                             const std::string& output_path) {
-  CF_EXPECT(DeAndroidSparse(partitions, android::base::Dirname(output_path)));
+  CF_EXPECT(DeAndroidSparseIfNeeded(partitions,
+                                    android::base::Dirname(output_path),
+                                    /*read_only=*/false));
 
   CompositeDiskBuilder builder(false);
   for (auto& partition : partitions) {
@@ -358,8 +366,8 @@ Result<void> CreateOrUpdateCompositeDisk(
     std::vector<ImagePartition> partitions, const std::string& header_file,
     const std::string& footer_file, const std::string& output_composite_path,
     bool read_only) {
-  CF_EXPECT(DeAndroidSparse(partitions,
-                            android::base::Dirname(output_composite_path)));
+  CF_EXPECT(DeAndroidSparseIfNeeded(
+      partitions, android::base::Dirname(output_composite_path), read_only));
 
   CompositeDiskBuilder builder(read_only);
   for (auto& partition : partitions) {

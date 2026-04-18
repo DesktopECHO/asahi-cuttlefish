@@ -1,8 +1,8 @@
 # this needs to be at parity with with build_external/crosvm/crosvm.config.toml
 CROSVM_REMOTE = "https://chromium.googlesource.com/crosvm/crosvm"
-CROSVM_REV = "ca4ee802a94ea2861fa03872fa263fcea744d83d"
+CROSVM_REV = "02e797273075c089cf075e7acb4d549323a167fb"
 MINIGBM_REMOTE = "https://chromium.googlesource.com/chromiumos/platform/minigbm"
-MINIGBM_REV = "b1fccad660ff4034f186d68b6474e3139e2dc4db"
+MINIGBM_REV = "9ccd5b3051a666a5c98582e36961e591e7b0784a"
 
 # note that this won't use the same source checkout as the git_repository directive below
 #

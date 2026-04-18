@@ -28,6 +28,23 @@ index d3cd68d366..39abcc3cd2 100644
  
  // Aligning pointer to 64 bytes for improved performance, e.g. use SIMD.
  static const int kBufferAlignment = 64;
+diff --git api/video/i410_buffer.cc api/video/i410_buffer.cc
+index 9f19d8c0f5..ec8c2a3ebf 100644
+--- api/video/i410_buffer.cc
++++ api/video/i410_buffer.cc
+@@ -16,9 +16,9 @@
+ #include "api/make_ref_counted.h"
+ #include "api/video/i420_buffer.h"
+ #include "rtc_base/checks.h"
+-#include "third_party/libyuv/include/libyuv/convert.h"
+-#include "third_party/libyuv/include/libyuv/planar_functions.h"
+-#include "third_party/libyuv/include/libyuv/scale.h"
++#include "libyuv/convert.h"
++#include "libyuv/planar_functions.h"
++#include "libyuv/scale.h"
+ 
+ // Aligning pointer to 64 bytes for improved performance, e.g. use SIMD.
+ static const int kBufferAlignment = 64;
 diff --git api/video/i420_buffer.cc api/video/i420_buffer.cc
 index bf7fc06ee9..d245fa361e 100644
 --- api/video/i420_buffer.cc

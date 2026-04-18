@@ -1,9 +1,39 @@
-casimir_crates = use_extension("@rules_rust//crate_universe:extensions.bzl", "crate")
+casimir_crates = use_extension(
+    "@rules_rust//crate_universe:extensions.bzl",
+    "crate",
+    isolate = True,
+)
+casimir_crates.spec(
+    package = "grpcio-sys",
+    version = "0.13.0",
+    features = ["openssl"],
+)
 casimir_crates.annotation(
     crate = "grpcio-sys",
+    gen_build_script = "off",
+    deps = [
+        ":grpc_wrap",
+        "@@//build_external/grpcio-sys:gpr_log_stub",
+    ],
+    rustc_env = {
+        "BINDING_PATH": "$(execpath bindings/bindings.rs)",
+    },
     version = "0.13.0",
     additive_build_file_content = """
 load("@rules_cc//cc:defs.bzl", "cc_library")
+
+cc_library(
+    name = "grpc_wrap",
+    srcs = [
+        "grpc_wrap.cc",
+        "@@//build_external/grpcio-sys:gpr_assert",
+    ],
+    copts = [
+        "-include",
+        "$(execpath @@//build_external/grpcio-sys:gpr_assert)",
+    ],
+    deps = ["@@//build_external/grpcio-sys:grpc_wrap_deps"],
+)
 """,
 )
 casimir_crates.from_cargo(
@@ -11,8 +41,6 @@ casimir_crates.from_cargo(
     manifests = [
         "@casimir//:Cargo.toml",
     ],
-    # Needed because it shares the extension with crosvm
-    cargo_config = "@//build_external/crosvm:crosvm.config.toml",
     host_tools = "@rust_host_tools_nightly",
 )
 use_repo(casimir_crates, "casimir_crates")

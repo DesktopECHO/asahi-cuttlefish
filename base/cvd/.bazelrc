@@ -1,4 +1,5 @@
 common --vendor_dir=vendor_src
+common --experimental_isolated_extension_usages
 
 build --build_tag_filters=-clang_tidy,-clang-tidy
 build --copt=-fdiagnostics-color=always
