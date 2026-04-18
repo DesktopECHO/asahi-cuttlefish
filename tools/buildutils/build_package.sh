@@ -80,6 +80,7 @@ readonly SOURCE_MANIFEST="${RPMBUILD_TOPDIR}/SOURCES/${TAR_BASENAME}.manifest"
 readonly SOURCE_STAGING_DIR="${RPMBUILD_TOPDIR}/SOURCES/${TAR_BASENAME}"
 declare -a build_workdirs=()
 readonly ALLOW_SCRCPY_SERVER_PREBUILT_FALLBACK="${ALLOW_SCRCPY_SERVER_PREBUILT_FALLBACK:-false}"
+readonly HOST_RPM_ARCH="$(rpm --eval '%{_arch}')"
 
 function normalize_spec_name() {
   local spec_name="$1"
@@ -99,6 +100,38 @@ function should_exclude_spec() {
     fi
   done
   return 1
+}
+
+function spec_supports_host_arch() {
+  local spec_path="$1"
+  local exclusive_arches
+  local excluded_arches
+  local arch
+  local matched
+
+  exclusive_arches="$(rpmspec --srpm --query --qf '%{EXCLUSIVEARCH}\n' "${spec_path}" 2>/dev/null | head -n1 || true)"
+  excluded_arches="$(rpmspec --srpm --query --qf '%{EXCLUDEARCH}\n' "${spec_path}" 2>/dev/null | head -n1 || true)"
+
+  if [[ -n "${exclusive_arches}" && "${exclusive_arches}" != "(none)" ]]; then
+    matched=false
+    for arch in ${exclusive_arches}; do
+      if [[ "${arch}" == "${HOST_RPM_ARCH}" ]]; then
+        matched=true
+        break
+      fi
+    done
+    [[ "${matched}" == "true" ]] || return 1
+  fi
+
+  if [[ -n "${excluded_arches}" && "${excluded_arches}" != "(none)" ]]; then
+    for arch in ${excluded_arches}; do
+      if [[ "${arch}" == "${HOST_RPM_ARCH}" ]]; then
+        return 1
+      fi
+    done
+  fi
+
+  return 0
 }
 
 function build_source_manifest() {
@@ -137,10 +170,15 @@ function refresh_source_tarball_if_needed() {
 
   # Only prepare the scrcpy-server when the scrcpy spec is actually being built.
   local building_scrcpy=false
+  local scrcpy_spec_path="${INPUT_PATH_ABS}/rpm/cuttlefish-scrcpy.spec"
   if [[ -f "${INPUT_PATH_ABS}" && "$(basename "${INPUT_PATH_ABS}" .spec)" == "cuttlefish-scrcpy" ]]; then
-    building_scrcpy=true
-  elif [[ -d "${INPUT_PATH_ABS}/rpm" && -f "${INPUT_PATH_ABS}/rpm/cuttlefish-scrcpy.spec" ]]; then
-    building_scrcpy=true
+    if ! should_exclude_spec "${INPUT_PATH_ABS}" && spec_supports_host_arch "${INPUT_PATH_ABS}"; then
+      building_scrcpy=true
+    fi
+  elif [[ -d "${INPUT_PATH_ABS}/rpm" && -f "${scrcpy_spec_path}" ]]; then
+    if ! should_exclude_spec "${scrcpy_spec_path}" && spec_supports_host_arch "${scrcpy_spec_path}"; then
+      building_scrcpy=true
+    fi
   fi
 
   if [[ "${building_scrcpy}" == "true" ]]; then
@@ -233,6 +271,10 @@ if [[ -f "${INPUT_PATH_ABS}" && "${INPUT_PATH_ABS}" == *.spec ]]; then
     echo "Skipping excluded spec $(basename "${INPUT_PATH_ABS}")"
     exit 0
   fi
+  if ! spec_supports_host_arch "${INPUT_PATH_ABS}"; then
+    echo "Skipping spec $(basename "${INPUT_PATH_ABS}") on ${HOST_RPM_ARCH}: unsupported by ExclusiveArch/ExcludeArch"
+    exit 0
+  fi
   specs=("${INPUT_PATH_ABS}")
   pushd_args=("$(dirname "${specs[0]}")")
 elif [[ -d "${INPUT_PATH_ABS}/rpm" ]]; then
@@ -241,17 +283,19 @@ elif [[ -d "${INPUT_PATH_ABS}/rpm" ]]; then
     >&2 echo "no spec files found under ${INPUT_PATH_ABS}/rpm"
     exit 1
   fi
-  if [[ ${#excluded_specs[@]} -gt 0 ]]; then
-    declare -a filtered_specs=()
-    for spec in "${specs[@]}"; do
-      if should_exclude_spec "${spec}"; then
-        echo "Skipping excluded spec $(basename "${spec}")"
-        continue
-      fi
-      filtered_specs+=("${spec}")
-    done
-    specs=("${filtered_specs[@]}")
-  fi
+  declare -a filtered_specs=()
+  for spec in "${specs[@]}"; do
+    if should_exclude_spec "${spec}"; then
+      echo "Skipping excluded spec $(basename "${spec}")"
+      continue
+    fi
+    if ! spec_supports_host_arch "${spec}"; then
+      echo "Skipping spec $(basename "${spec}") on ${HOST_RPM_ARCH}: unsupported by ExclusiveArch/ExcludeArch"
+      continue
+    fi
+    filtered_specs+=("${spec}")
+  done
+  specs=("${filtered_specs[@]}")
   if [[ ${#specs[@]} -eq 0 ]]; then
     echo "No RPM specs left to build under ${INPUT_PATH_ABS}/rpm after exclusions"
     exit 0

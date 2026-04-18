@@ -168,6 +168,10 @@ while true; do
     --repository_cache="$BAZEL_REPOSITORY_CACHE" \
     --disk_cache="$BAZEL_DISK_CACHE" \
     --distdir="$BAZEL_DISTDIR" \
+    --cxxopt=-Wno-error=deprecated-declarations \
+    --host_cxxopt=-Wno-error=deprecated-declarations \
+    --conlyopt=-Wno-error=incompatible-pointer-types-discards-qualifiers \
+    --host_conlyopt=-Wno-error=incompatible-pointer-types-discards-qualifiers \
     'cuttlefish/package:cvd' \
     'cuttlefish/package:defaults' \
     'cuttlefish/package:metrics' \
