@@ -3,3 +3,7 @@ package(
         "@gfxstream//:__subpackages__",
     ],
 )
+
+exports_files([
+    "PATCH.protobuf_deprecation_warning.patch",
+])

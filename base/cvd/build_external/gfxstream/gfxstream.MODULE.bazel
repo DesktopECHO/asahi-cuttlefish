@@ -4,4 +4,8 @@ git_repository(
     name = "gfxstream",
     commit = "8fa6ea4e904fcf050999a70a7a4703dca59875e7",
     remote = "https://github.com/google/gfxstream.git",
+    patch_strip = 1,
+    patches = [
+        "@//build_external/gfxstream:PATCH.protobuf_deprecation_warning.patch",
+    ],
 )
