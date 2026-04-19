@@ -48,13 +48,6 @@ netsim_crates.annotation(
     gen_all_binaries = True,
     repositories = ["netsim_crates"],
 )
-# b/413182531 no need to specify .spec() for pdl-compiler because it is already
-# in rootcanal's MODULE.bazel.
-netsim_crates.annotation(
-    crate = "pdl-compiler",
-    gen_all_binaries = True,
-    repositories = ["netsim_crates"],
-)
 netsim_crates.spec(
     package = "openssl",
     version = "0.10.73",
@@ -104,7 +97,7 @@ git_repository = use_repo_rule("@bazel_tools//tools/build_defs/repo:git.bzl", "g
 git_repository(
     name = "android_tools_netsim",
     build_file = "@//build_external/android_tools_netsim:BUILD.android_tools_netsim.bazel",
-    commit = "efabf7cb7e63b7466f79e9171907ed1e746ef1a3",
+    commit = "aaebb6787db0840a22d417fae5c97655946edbf4",
     remote = "https://android.googlesource.com/platform/tools/netsim",
     patches = [
         "@//build_external/android_tools_netsim:0001-Drop-pica-from-daemon-Cargo.toml.patch",
