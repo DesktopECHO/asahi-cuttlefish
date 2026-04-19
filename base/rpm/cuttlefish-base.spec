@@ -138,8 +138,8 @@ case "%{_arch}" in
   *) echo "Unsupported architecture: %{_arch}" >&2; exit 1 ;;
 esac
 
-SOURCE_TARBALL="%{_sourcedir}/%{SOURCE0}"
-if [[ ! -f base/cvd/adb/BUILD.bazel ]]; then
+SOURCE_TARBALL="%{_sourcedir}/android-cuttlefish-%{version}.tar.gz"
+if [[ ! -f base/cvd/adb/BUILD.bazel || ! -x base/cvd/tools/ensure_crosvm_git_mirror.sh ]]; then
   echo "Repairing incomplete extracted source tree from ${SOURCE_TARBALL}"
   tar -xzf "${SOURCE_TARBALL}" --strip-components=2 -C base \
     "android-cuttlefish-%{version}/base/cvd"

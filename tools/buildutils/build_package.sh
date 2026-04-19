@@ -79,7 +79,6 @@ readonly SOURCE_TARBALL="${RPMBUILD_TOPDIR}/SOURCES/${TAR_BASENAME}.tar.gz"
 readonly SOURCE_MANIFEST="${RPMBUILD_TOPDIR}/SOURCES/${TAR_BASENAME}.manifest"
 readonly SOURCE_STAGING_DIR="${RPMBUILD_TOPDIR}/SOURCES/${TAR_BASENAME}"
 declare -a build_workdirs=()
-readonly ALLOW_SCRCPY_SERVER_PREBUILT_FALLBACK="${ALLOW_SCRCPY_SERVER_PREBUILT_FALLBACK:-false}"
 readonly HOST_RPM_ARCH="$(rpm --eval '%{_arch}')"
 
 function normalize_spec_name() {
@@ -109,8 +108,8 @@ function spec_supports_host_arch() {
   local arch
   local matched
 
-  exclusive_arches="$(rpmspec --srpm --query --qf '%{EXCLUSIVEARCH}\n' "${spec_path}" 2>/dev/null | head -n1 || true)"
-  excluded_arches="$(rpmspec --srpm --query --qf '%{EXCLUDEARCH}\n' "${spec_path}" 2>/dev/null | head -n1 || true)"
+  exclusive_arches="$(rpmspec --srpm --query --qf '[%{EXCLUSIVEARCH} ]' "${spec_path}" 2>/dev/null || true)"
+  excluded_arches="$(rpmspec --srpm --query --qf '[%{EXCLUDEARCH} ]' "${spec_path}" 2>/dev/null || true)"
 
   if [[ -n "${exclusive_arches}" && "${exclusive_arches}" != "(none)" ]]; then
     matched=false
@@ -161,8 +160,10 @@ function build_source_manifest() {
 
 function refresh_source_tarball_if_needed() {
   local tmp_manifest
+  local tmp_source_tarball
   tmp_manifest="$(mktemp "${RPMBUILD_TOPDIR}/SOURCES/${TAR_BASENAME}.manifest.XXXXXX")"
-  trap 'rm -f "${tmp_manifest}"' RETURN
+  tmp_source_tarball="$(mktemp "${RPMBUILD_TOPDIR}/SOURCES/${TAR_BASENAME}.tar.gz.XXXXXX")"
+  trap 'rm -f "${tmp_manifest}" "${tmp_source_tarball}"' RETURN
 
   local scrcpy_server_dest="${REPO_DIR}/scrcpy/scrcpy-server"
   local scrcpy_server_build_helper="${REPO_DIR}/tools/build_scrcpy_server_aarch64.sh"
@@ -186,45 +187,36 @@ function refresh_source_tarball_if_needed() {
     # source tarball cannot silently reuse a stale server APK from a prior run.
     rm -f "${scrcpy_server_dest}"
 
-    # Prefer a locally built server when the helper is available. This keeps
-    # the device-side server in lockstep with our packaged client and avoids
-    # protocol mismatches seen with the upstream prebuilt on some hosts.
-    if [[ -x "${scrcpy_server_build_helper}" ]]; then
-      echo "Building scrcpy-server locally for $(uname -m)"
-      if BUILD_DIR="${REPO_DIR}/out/build-scrcpy-server" "${scrcpy_server_build_helper}"; then
-        install -m 0644 "${local_scrcpy_server}" "${scrcpy_server_dest}"
-      else
-        if [[ "${ALLOW_SCRCPY_SERVER_PREBUILT_FALLBACK}" == "true" ]]; then
-          echo "Local scrcpy-server build failed; falling back to the upstream prebuilt"
-          rm -f "${scrcpy_server_dest}"
-        else
-          >&2 echo "Local scrcpy-server build failed and fallback is disabled."
-          >&2 echo "Set ALLOW_SCRCPY_SERVER_PREBUILT_FALLBACK=true to override."
-          return 1
-        fi
-      fi
+    # Always rebuild scrcpy-server from the checked-in source so the packaged
+    # client and device-side server stay in lockstep on every host arch.
+    if [[ ! -x "${scrcpy_server_build_helper}" ]]; then
+      >&2 echo "Missing scrcpy-server build helper: ${scrcpy_server_build_helper}"
+      return 1
     fi
 
-    # Fetch scrcpy-server JAR if a local build did not provide one.
-    # Version is read from the meson.build project declaration so it stays in sync.
-    if [[ ! -f "${scrcpy_server_dest}" ]]; then
-      local scrcpy_version
-      scrcpy_version="$(grep -m1 "version:" "${REPO_DIR}/scrcpy/meson.build" \
-                        | grep -oP "'\K[0-9]+\.[0-9]+\.[0-9]+")" || true
-      if [[ -n "${scrcpy_version}" ]]; then
-        echo "Fetching scrcpy-server v${scrcpy_version}"
-        curl -fL --retry 3 \
-          -o "${scrcpy_server_dest}" \
-          "https://github.com/Genymobile/scrcpy/releases/download/v${scrcpy_version}/scrcpy-server-v${scrcpy_version}"
-      fi
+    echo "Building scrcpy-server locally for $(uname -m)"
+    if ! BUILD_DIR="${REPO_DIR}/out/build-scrcpy-server" "${scrcpy_server_build_helper}"; then
+      >&2 echo "Local scrcpy-server build failed."
+      return 1
     fi
+
+    if [[ ! -f "${local_scrcpy_server}" ]]; then
+      >&2 echo "scrcpy-server build completed without producing ${local_scrcpy_server}"
+      return 1
+    fi
+
+    install -m 0644 "${local_scrcpy_server}" "${scrcpy_server_dest}"
   fi
 
   build_source_manifest "${tmp_manifest}"
 
   if [[ -f "${SOURCE_TARBALL}" && -f "${SOURCE_MANIFEST}" ]] && cmp -s "${tmp_manifest}" "${SOURCE_MANIFEST}"; then
-    echo "Reusing source tarball ${SOURCE_TARBALL}"
-    return
+    if tar -tzf "${SOURCE_TARBALL}" >/dev/null 2>&1; then
+      echo "Reusing source tarball ${SOURCE_TARBALL}"
+      return
+    fi
+
+    echo "Discarding corrupt source tarball ${SOURCE_TARBALL}"
   fi
 
   rm -rf "${SOURCE_STAGING_DIR}" "${SOURCE_TARBALL}"
@@ -239,7 +231,8 @@ function refresh_source_tarball_if_needed() {
     "${REPO_DIR}/" \
     "${SOURCE_STAGING_DIR}/"
 
-  tar -czf "${SOURCE_TARBALL}" -C "${RPMBUILD_TOPDIR}/SOURCES" "${TAR_BASENAME}"
+  tar -czf "${tmp_source_tarball}" -C "${RPMBUILD_TOPDIR}/SOURCES" "${TAR_BASENAME}"
+  mv "${tmp_source_tarball}" "${SOURCE_TARBALL}"
   mv "${tmp_manifest}" "${SOURCE_MANIFEST}"
   rm -rf "${SOURCE_STAGING_DIR}"
 }
