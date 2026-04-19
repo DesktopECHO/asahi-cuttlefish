@@ -70,6 +70,7 @@ Requires(post): /usr/sbin/usermod
 Requires(post): /usr/sbin/setcap
 Requires(post): /usr/sbin/sysctl
 Requires(post): /usr/bin/systemctl
+Requires(posttrans): /usr/sbin/setcap
 Requires(preun): /usr/bin/systemctl
 Requires(postun): /usr/bin/systemctl
 
@@ -308,6 +309,9 @@ fi
 if systemctl is-active --quiet firewalld 2>/dev/null; then
   firewall-cmd --reload >/dev/null 2>&1 || :
 fi
+
+%posttrans
+setcap cap_net_admin,cap_net_bind_service,cap_net_raw=+ep /usr/lib/cuttlefish-common/bin/cvdalloc >/dev/null 2>&1 || :
 
 %post -n ika-defaults
 systemctl daemon-reload >/dev/null 2>&1 || :
