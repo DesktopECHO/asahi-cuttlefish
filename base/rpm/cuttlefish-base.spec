@@ -275,11 +275,10 @@ setcap cap_net_admin,cap_net_bind_service,cap_net_raw=+ep /usr/lib/cuttlefish-co
 /usr/libexec/cuttlefish/cuttlefish-add-user-to-groups || :
 udevadm control --reload >/dev/null 2>&1 || :
 systemctl daemon-reload >/dev/null 2>&1 || :
-%ifarch aarch64
+# Keep the legacy host-resources service opt-in. The default ika workflow uses
+# per-user cvdalloc networking, which manages dnsmasq under /var/tmp/cvd and
+# can be cleaned up without root privileges.
 systemctl disable --now cuttlefish-host-resources.service >/dev/null 2>&1 || :
-%else
-systemctl enable --now cuttlefish-host-resources.service >/dev/null 2>&1 || :
-%endif
 required_nofile=524288
 required_rtprio=10
 current_soft_nofile="$(ulimit -Sn 2>/dev/null || echo 0)"

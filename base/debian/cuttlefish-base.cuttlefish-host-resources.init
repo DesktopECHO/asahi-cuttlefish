@@ -89,7 +89,6 @@ start_dnsmasq() {
       --dhcp-leasefile=/var/run/cuttlefish-dnsmasq-"${1}".leases \
       --dhcp-no-override \
       ${ipv6_args}
-
 }
 
 # Stop DHCP server on an interface
