@@ -75,6 +75,7 @@ function install_rpm_build_dependencies() {
     libXext-devel \
     libcurl-devel \
     libdrm-devel \
+    libxcrypt-compat \
     libuuid-devel \
     libxml2-devel \
     libsrtp-devel \

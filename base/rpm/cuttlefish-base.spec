@@ -22,6 +22,7 @@ BuildRequires:  libXext-devel
 BuildRequires:  libcurl-devel
 BuildRequires:  libavdevice-free-devel
 BuildRequires:  libdrm-devel
+BuildRequires:  libxcrypt-compat
 BuildRequires:  libuuid-devel
 BuildRequires:  libxml2-devel
 BuildRequires:  libsrtp-devel
