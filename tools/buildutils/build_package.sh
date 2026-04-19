@@ -186,10 +186,11 @@ function refresh_source_tarball_if_needed() {
     # source tarball cannot silently reuse a stale server APK from a prior run.
     rm -f "${scrcpy_server_dest}"
 
-    # On aarch64, build the server locally. The upstream prebuilt causes
-    # protocol issues with the SDL3 client on Asahi.
-    if [[ "$(uname -m)" == "aarch64" && -x "${scrcpy_server_build_helper}" ]]; then
-      echo "Building scrcpy-server locally for aarch64"
+    # Prefer a locally built server when the helper is available. This keeps
+    # the device-side server in lockstep with our packaged client and avoids
+    # protocol mismatches seen with the upstream prebuilt on some hosts.
+    if [[ -x "${scrcpy_server_build_helper}" ]]; then
+      echo "Building scrcpy-server locally for $(uname -m)"
       if BUILD_DIR="${REPO_DIR}/out/build-scrcpy-server" "${scrcpy_server_build_helper}"; then
         install -m 0644 "${local_scrcpy_server}" "${scrcpy_server_dest}"
       else
