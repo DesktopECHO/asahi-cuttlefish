@@ -47,6 +47,7 @@ struct GatewayConfig {
   bool has_gateway = false;
   bool has_dnsmasq = false;
   bool has_iptable = false;
+  bool has_firewall = false;
 };
 
 int RunExternalCommand(const std::string& command);
@@ -57,7 +58,6 @@ bool CreateTap(std::string_view name);
 #ifdef __linux__
 Result<void> ValidateTapInterfaceIsUsable(const std::string& interface_name);
 #endif
-
 
 bool DestroyIface(std::string_view name);
 

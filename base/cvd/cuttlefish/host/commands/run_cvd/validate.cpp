@@ -35,6 +35,10 @@ static Result<void> TestTapDevices(
   if (InSandbox()) {
     return {};
   }
+  if (instance.use_cvdalloc()) {
+    VLOG(0) << "Skipping legacy tap validation for cvdalloc-managed network";
+    return {};
+  }
   auto wifi = instance.wifi_tap_name();
   CF_EXPECTF(ValidateTapInterfaceIsUsable(wifi), "Device \"{}\" in use", wifi);
   auto mobile = instance.mobile_tap_name();

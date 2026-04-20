@@ -121,7 +121,6 @@ func ExecFetchCmdOnDisposableHost(ccm libcfcontainer.CuttlefishContainerManager,
 		return fmt.Errorf("failed to stop and remove container: %w", err)
 	}
 	return nil
-}
 
 func ExecHelpCmdOnDisposableHost(ccm libcfcontainer.CuttlefishContainerManager, cvdArgs *CvdArgs) error {
 	if err := pullContainerImage(ccm); err != nil {

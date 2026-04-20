@@ -77,6 +77,14 @@ static bool UseSdcard(const Instance& instance) {
   }
 }
 
+static bool PreferPerformanceCores(const Instance& instance) {
+  if (instance.vm().has_prefer_performance_cores()) {
+    return instance.vm().prefer_performance_cores();
+  } else {
+    return CF_DEFAULTS_PREFER_PERFORMANCE_CORES;
+  }
+}
+
 static Result<std::string> SetupWizardMode(const Instance& instance) {
   if (instance.vm().has_setupwizard_mode()) {
     CF_EXPECT(ValidateSetupWizardMode(instance.vm().setupwizard_mode()));
@@ -166,6 +174,8 @@ Result<std::vector<std::string>> GenerateVmFlags(
       GenerateInstanceFlag("vm_manager", cfg, VmManager),
       GenerateInstanceFlag("cpus", cfg, Cpus),
       GenerateInstanceFlag("memory_mb", cfg, MemoryMb),
+      GenerateInstanceFlag("prefer_performance_cores", cfg,
+                           PreferPerformanceCores),
       GenerateInstanceFlag("use_sdcard", cfg, UseSdcard),
       CF_EXPECT(ResultInstanceFlag("setupwizard_mode", cfg, SetupWizardMode)),
       GenerateInstanceFlag("uuid", cfg, Uuid),

@@ -104,4 +104,13 @@ Result<void> IptableConfig(std::string_view network, bool add) {
   return {};
 }
 
+// On Fedora/RHEL, firewalld zone assignment for these bridge interfaces is
+// handled statically via /etc/firewalld/zones/cuttlefish.xml installed by the
+// RPM package. Calling firewall-cmd at runtime would require polkit
+// authentication (cvdalloc runs with ambient capabilities, not as root, so
+// polkit sees uid=user and prompts for credentials). No-ops here; the zone
+// file covers it.
+void FirewallAddTrustedInterface(std::string_view) {}
+void FirewallRemoveTrustedInterface(std::string_view) {}
+
 }  // namespace cuttlefish

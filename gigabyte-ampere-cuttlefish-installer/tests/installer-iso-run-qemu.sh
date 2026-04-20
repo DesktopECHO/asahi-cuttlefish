@@ -9,10 +9,28 @@ if [ x"${TEST_DISK_SIZE}" = x ]; then
     TEST_DISK_SIZE="${TEST_DISK_SIZE_DEFAULT}"
 fi
 
+find_uboot() {
+    for candidate in \
+        /usr/lib/u-boot/qemu_arm64/u-boot.bin \
+        /usr/share/uboot/qemu_arm64/u-boot.bin \
+        /usr/share/uboot/qemu-arm64/u-boot.bin; do
+        if [ -f "${candidate}" ]; then
+            echo "${candidate}"
+            return 0
+        fi
+    done
+    find /usr -type f \( -path '*/qemu_arm64/u-boot.bin' -o -path '*/qemu-arm64/u-boot.bin' \) 2>/dev/null | head -n 1
+}
+
 tmpdisk1="uboot_qemu_disk1.img"
 tmpflash="uboot_qemu_flash.img"
-uboot="/usr/lib/u-boot/qemu_arm64/u-boot.bin"
+uboot="$(find_uboot)"
 debiancd=preseed-mini*.iso
+
+if [ -z "${uboot}" ]; then
+    echo "failed to find qemu arm64 u-boot image" >&2
+    exit 1
+fi
 
 debiancd=$(realpath ${debiancd})
 

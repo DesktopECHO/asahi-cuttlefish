@@ -38,5 +38,9 @@ Result<bool> BridgeExists(std::string_view name);
 Result<bool> BridgeInUse(std::string_view name);
 Result<void> CreateBridge(std::string_view name);
 Result<void> IptableConfig(std::string_view network, bool add);
+// Configure firewalld to allow/disallow traffic on an interface.
+// No-ops if firewalld is not installed or not running.
+void FirewallAddTrustedInterface(std::string_view interface_name);
+void FirewallRemoveTrustedInterface(std::string_view interface_name);
 
 }  // namespace cuttlefish

@@ -17,38 +17,22 @@
 set -o errexit -o nounset -o pipefail
 
 if [[ $# -eq 0 ]] ; then
-  echo "usage: $0 <linux-image-deb>"
+  echo "usage: $0 <kernel-package-name>"
   exit 1
 fi
-linux_image_deb=$1
+kernel_package=$1
 
-arch=$(uname -m)
-[ "${arch}" = "x86_64" ] && arch=amd64
-[ "${arch}" = "aarch64" ] && arch=arm64
+start_kernel=$(sudo chroot /mnt/image /usr/bin/rpm -q kernel-core --qf '%{NAME}-%{VERSION}-%{RELEASE}.%{ARCH}\n' | tail -1)
+echo "START VERSION: ${start_kernel}"
 
-sudo apt-get update
-sudo apt-get upgrade -y
+sudo chroot /mnt/image /usr/bin/dnf install -y "${kernel_package}"
 
-version=$(sudo chroot /mnt/image/ /usr/bin/dpkg -s linux-image-cloud-${arch} | grep ^Depends: | \
-  cut -d: -f2 | cut -d" " -f2 )
-echo "START VERSION: ${version}"
+end_kernel=$(sudo chroot /mnt/image /usr/bin/rpm -q kernel-core --qf '%{NAME}-%{VERSION}-%{RELEASE}.%{ARCH}\n' | tail -1)
+echo "END VERSION: ${end_kernel}"
 
-sudo chroot /mnt/image /usr/bin/apt-get update
-sudo chroot /mnt/image /usr/bin/apt-get upgrade -y
-
-version=$(sudo chroot /mnt/image/ /usr/bin/dpkg -s linux-image-cloud-${arch} | grep ^Depends: | \
-  cut -d: -f2 | cut -d" " -f2 )
-echo "AFTER UPGRADE VERSION: ${version}"
-
-sudo chroot /mnt/image /usr/bin/apt-get install -y ${linux_image_deb}
-
-version=$(sudo chroot /mnt/image/ /usr/bin/dpkg -s linux-image-cloud-${arch} | grep ^Depends: | \
-  cut -d: -f2 | cut -d" " -f2)
-echo "END VERSION: ${version}"
-
-if [ "${version}" != "${linux_image_deb}" ]; then
+if ! sudo chroot /mnt/image /usr/bin/rpm -q "${kernel_package}" >/dev/null 2>&1; then
   echo "CREATE IMAGE FAILED!!!"
-  echo "Expected ${linux_image_deb}, got: ${version}"
+  echo "Expected installed kernel package ${kernel_package}"
   exit 1
 fi
 

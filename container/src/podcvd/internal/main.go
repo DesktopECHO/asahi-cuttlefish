@@ -184,10 +184,14 @@ func clearAllCuttlefishHosts(ccm libcfcontainer.CuttlefishContainerManager) erro
 	wg.Add(len(groupNameIpAddrMap) + 1)
 	errCh := make(chan error, len(groupNameIpAddrMap)+1)
 	for groupName := range groupNameIpAddrMap {
-		go func(groupName string) {
+		go func() {
 			defer wg.Done()
-			errCh <- errors.Join(disconnectAdb(ccm, groupName), DeleteCuttlefishHost(ccm, groupName))
-		}(groupName)
+			if err := disconnectAdb(ccm, groupName); err != nil {
+				errCh <- err
+				return
+			}
+			errCh <- DeleteCuttlefishHost(ccm, groupName)
+		}()
 	}
 	go func() {
 		defer wg.Done()

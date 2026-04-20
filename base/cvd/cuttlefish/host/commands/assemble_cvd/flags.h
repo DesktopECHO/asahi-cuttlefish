@@ -35,8 +35,7 @@
 
 namespace cuttlefish {
 
-constexpr char kDefaultsFilePath[] =
-    "/usr/lib/cuttlefish-common/etc/cf_defaults";
+constexpr char kDefaultsFilePath[] = "/etc/cuttlefish-common/cf_defaults";
 
 Result<void> SetFlagDefaultsForVmm(
     const std::vector<GuestConfig>& guest_configs,

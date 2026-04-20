@@ -40,10 +40,20 @@ if [ "${DISABLE_BAZEL_WRAPPER}" != "" ] \
   fi
 fi
 
-# Read the bazel version from .bazelversion file in the root of the repository
+# Read the Bazel version from OVERRIDE_BAZEL_VERSION first, then fall back to
+# a workspace-local .bazelversion file when present.
 BAZELVERSION_FILE_PATH="$(dirname $(readlink -f "$0"))/../.bazelversion"
-VERSION_FROM_BAZELVERSION_FILE=$(cat ${BAZELVERSION_FILE_PATH})
-VERSION=${OVERRIDE_BAZEL_VERSION:-${VERSION_FROM_BAZELVERSION_FILE}}
+if [ "${OVERRIDE_BAZEL_VERSION}" != "" ]; then
+  VERSION="${OVERRIDE_BAZEL_VERSION}"
+elif [ -f "${BAZELVERSION_FILE_PATH}" ]; then
+  VERSION=$(cat "${BAZELVERSION_FILE_PATH}")
+else
+  cat >&2 <<EOF
+ERROR: Missing Bazel version configuration.
+ERROR: Set OVERRIDE_BAZEL_VERSION or provide ${BAZELVERSION_FILE_PATH}.
+EOF
+  exit 1
+fi
 cat << EOF >&2
 INFO: Running bazel wrapper (see //tools/bazel for details)
 INFO: bazel version $VERSION will be used instead of the system-wide bazel.

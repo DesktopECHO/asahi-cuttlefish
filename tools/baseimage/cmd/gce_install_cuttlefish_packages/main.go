@@ -28,15 +28,15 @@ import (
 	"github.com/google/android-cuttlefish/tools/baseimage/pkg/gce/scripts"
 )
 
-type DebSrcsFlag struct {
+type RpmSrcsFlag struct {
 	Srcs []string
 }
 
-func (v *DebSrcsFlag) String() string {
+func (v *RpmSrcsFlag) String() string {
 	return strings.Join(v.Srcs, " ")
 }
 
-func (v *DebSrcsFlag) Set(s string) error {
+func (v *RpmSrcsFlag) Set(s string) error {
 	_, err := os.Stat(s)
 	if err != nil {
 		return fmt.Errorf("invalid path: %w", err)
@@ -55,7 +55,7 @@ var (
 	sourceImageProject string
 	sourceImage        string
 	imageName          string
-	debSrcs            DebSrcsFlag
+	rpmSrcs            RpmSrcsFlag
 )
 
 func init() {
@@ -65,7 +65,7 @@ func init() {
 	flag.StringVar(&sourceImageProject, "source-image-project", "", "Source image GCP project")
 	flag.StringVar(&sourceImage, "source-image", "", "Source image name")
 	flag.StringVar(&imageName, "image-name", "", "output GCE image name")
-	flag.Var(&debSrcs, "deb", "local path to debian package")
+	flag.Var(&rpmSrcs, "rpm", "local path to rpm package")
 }
 
 func main() {
@@ -87,8 +87,8 @@ func main() {
 	if imageName == "" {
 		log.Fatal("usage: `-image-name` must not be empty")
 	}
-	if len(debSrcs.Srcs) == 0 {
-		log.Fatal("usage: `-deb` must not be empty")
+	if len(rpmSrcs.Srcs) == 0 {
+		log.Fatal("usage: `-rpm` must not be empty")
 	}
 
 	buildImageOpts := gce.BuildImageOpts{
@@ -99,18 +99,18 @@ func main() {
 		CreateAttachedDiskOpts: gce.CreateDiskOpts{SizeGb: 32},
 		ModifyFunc: func(project, zone, insName string) error {
 			dstSrcs := []string{}
-			for _, src := range debSrcs.Srcs {
+			for _, src := range rpmSrcs.Srcs {
 				dst := "/tmp/" + filepath.Base(src)
 				dstSrcs = append(dstSrcs, dst)
 				if err := gce.UploadFile(project, zone, insName, src, dst); err != nil {
 					return fmt.Errorf("error uploading %s: %v", src, err)
 				}
 			}
-			if err := gce.UploadBashScript(project, zone, insName, "install_cuttlefish_debs.sh", scripts.InstallCuttlefishDebs); err != nil {
+			if err := gce.UploadBashScript(project, zone, insName, "install_cuttlefish_rpms.sh", scripts.InstallCuttlefishRpms); err != nil {
 				return fmt.Errorf("error uploading bash script: %v", err)
 			}
 			args := strings.Join(dstSrcs, " ")
-			return gce.RunCmd(project, zone, insName, "./install_cuttlefish_debs.sh "+args)
+			return gce.RunCmd(project, zone, insName, "./install_cuttlefish_rpms.sh "+args)
 		},
 	}
 

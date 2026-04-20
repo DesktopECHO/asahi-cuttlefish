@@ -25,8 +25,9 @@ pdl_rust = rule(
             values = ["rust", "rust_legacy"],
         ),
         "_pdlc": attr.label(
-            # Any crates with pdl-compiler would work.
-            default = "@netsim_crates//:pdl-compiler__pdlc",
+            # Reuse rootcanal's pdl compiler instead of generating a second
+            # crate-universe toolchain for netsim.
+            default = "@rootcanal//packets:pdlc",
             executable = True,
             cfg = "exec",
         ),

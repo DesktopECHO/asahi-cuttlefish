@@ -159,6 +159,7 @@ const std::unordered_set<std::string>& BoolFlags() {
       "guest_enforce_security",
       "kgdb",
       "pause_in_bootloader",
+      "prefer_performance_cores",
       "record_screen",
       "restart_subprocesses",
       "smt",

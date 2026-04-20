@@ -270,7 +270,7 @@ void LocalRecorder::Display::Stop() {
 webrtc::EncodedImageCallback::Result LocalRecorder::Display::OnEncodedImage(
     const webrtc::EncodedImage& encoded_image,
     const webrtc::CodecSpecificInfo* codec_specific_info) {
-  uint64_t timestamp = encoded_image.Timestamp() / kRtpTicksPerNs;
+  uint64_t timestamp = encoded_image.RtpTimestamp() / kRtpTicksPerNs;
 
   std::lock_guard lock(impl_.mkv_mutex_);
 
@@ -289,11 +289,10 @@ webrtc::EncodedImageCallback::Result LocalRecorder::Display::OnEncodedImage(
           : webrtc::EncodedImageCallback::Result::Error::ERROR_SEND_FAILED);
 
   if (success) {
-    result.frame_id = encoded_image.Timestamp();
+    result.frame_id = encoded_image.RtpTimestamp();
   }
   return result;
 }
 
 } // namespace webrtc_streaming
 } // namespace cuttlefish
-

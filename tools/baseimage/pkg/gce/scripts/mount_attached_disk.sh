@@ -34,7 +34,7 @@ sudo mount --bind /boot/efi ${MOUNTPOINT}/boot/efi
 sudo mount --bind /dev/ ${MOUNTPOINT}/dev
 sudo mount --bind /dev/pts ${MOUNTPOINT}/dev/pts
 sudo mount --bind /run ${MOUNTPOINT}/run
-# resolv.conf is needed on Debian but not Ubuntu
+# Some guest images do not ship a resolv.conf inside the mounted root.
 if [ ! -f ${MOUNTPOINT}/etc/resolv.conf ]; then
   sudo cp /etc/resolv.conf ${MOUNTPOINT}/etc/
 fi

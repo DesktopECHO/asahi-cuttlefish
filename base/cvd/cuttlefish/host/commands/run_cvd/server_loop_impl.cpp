@@ -123,6 +123,7 @@ Result<void> ServerLoopImpl::Run() {
     Select(&read_set, nullptr, nullptr, nullptr);
 
     if (read_set.IsSet(process_monitor.status())) {
+      LOG(ERROR) << "run_cvd server loop detected process monitor exit";
       return CF_ERR("process monitor has died");
     }
 

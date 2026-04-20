@@ -152,6 +152,8 @@ DECLARE_vec(vsock_guest_group);
 
 DECLARE_string(secure_hals);
 
+DECLARE_vec(prefer_performance_cores);
+
 DECLARE_vec(use_sdcard);
 
 DECLARE_vec(protected_vm);

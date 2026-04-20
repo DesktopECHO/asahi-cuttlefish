@@ -1,79 +1,118 @@
-# Virtual Device for Android host-side utilities
+<img width="2480" height="2064" alt="Screenshot From 2026-04-01 22-30-37" src="https://github.com/user-attachments/assets/24e59e40-5dfd-45c2-9d69-ed64f1155c6c" />
 
-This repository holds supporting tools that prepare a host to boot
-[Cuttlefish](https://source.android.com/setup/create/cuttlefish), a configurable
-Android Virtual Device (AVD) that targets both locally hosted Linux x86/arm64
-and remotely hosted Google Compute Engine (GCE) instances rather than physical
-hardware.
+# Android Cuttlefish+CrosVM for Fedora Asahi Remix
 
-## Debian packages
+This repository is a fork of
+[google/android-cuttlefish](https://github.com/google/android-cuttlefish), adapted for RPM-based distributions like Fedora Asahi Remix. 
 
-The following debian packages are provided:
+[Cuttlefish](https://source.android.com/setup/create/cuttlefish) is a
+configurable Android Virtual Device (AVD) that runs on Linux x86_64 and
+aarch64 hosts as well as Google Compute Engine.
 
-* `cuttlefish-base` - Creates static resources needed by the Cuttlefish devices
-* `cuttlefish-user` - Provides a local web server that enables interactions with
-the devices through the browser
-* `cuttlefish-integration` - Installs additional utilities to run Cuttlefish in
-Google Compute Engine
-* `cuttlefish-orchestration` - Replaces `cuttlefish-user` in the
-[Orchestration project](https://github.com/google/cloud-android-orchestration)
-* `cuttlefish-common` - [DEPRECATED] Provided for compatibility only, it's a
-metapackage that depends on `cuttlefish-base` and `cuttlefish-user`
-
-### Download from Artifact Registry
-
-To register the apt repository on Artifact Registry, please execute command
-below.
+## Quick start on Fedora Asahi
 
 ```bash
-sudo curl -fsSL https://us-apt.pkg.dev/doc/repo-signing-key.gpg \
-    -o /etc/apt/trusted.gpg.d/artifact-registry.asc
-sudo chmod a+r /etc/apt/trusted.gpg.d/artifact-registry.asc
-echo "deb https://us-apt.pkg.dev/projects/android-cuttlefish-artifacts android-cuttlefish main" \
-    | sudo tee -a /etc/apt/sources.list.d/artifact-registry.list
-sudo apt update
-```
+# 1. Clone the Asahi-Cuttlefish repo:
+git clone https://github.com/DesktopECHO/asahi-cuttlefish.git
+cd asahi-cuttlefish
 
-Afterwards, debian packages are available to download via `apt install`. Noting
-that only `cuttlefish-base`, `cuttlefish-user`, and `cuttlefish-orchestration`
-are deployed to Artifact Registry.
+# 2. Start the build from the repo root
+./tools/buildutils/build_packages.sh
+  It will take 30-60 min to build Cuttlefish and CrosVM.
 
-```bash
-sudo apt install cuttlefish-base cuttlefish-user cuttlefish-orchestration
-```
+# 3. Install the local host packages and bundled LineageOS tree
+sudo dnf install \
+  ./out/rpmbuild/RPMS/*/cuttlefish-base-*.rpm \
+  ./out/rpmbuild/RPMS/*/cuttlefish-user-*.rpm \
+  ./out/rpmbuild/RPMS/*/cuttlefish-lineageos-*.rpm
 
-### Build and install manually
-
-The packages can be built with the following script:
-
-```bash
-tools/buildutils/build_packages.sh
-```
-
-Cuttlefish requires only `cuttlefish-base` to be installed, but `cuttlefish-user`
-is recommended to enjoy a better user experience. These can be installed after
-building with the following commands:
-
-```bash
-sudo apt install ./cuttlefish-base_*.deb ./cuttlefish-user_*.deb
-sudo usermod -aG kvm,cvdnetwork,render $USER
+# 4. Add yourself to the required groups and reboot
+sudo usermod -aG kvm,cvdnetwork,render,video "$USER"
 sudo reboot
+
+# 5. Launch
+ika start 
+``` 
+
+A few seconds after the virtual device is started, `scrcpy` will automatically open.  Alternatively, visit `https://localhost:8443` in a browser to view the WebRTC virtual device console.
+
+## Managing the VM with `ika`
+
+After the RPMs are installed, `ika` is available on your `PATH` and can be used
+to start, stop, and restart the packaged Cuttlefish environment.
+
+```bash
+# Start a windowed VM
+ika start 
+
+# Check whether the VM is running
+ika status
+
+# Stop the VM and clear instance state
+ika stop
+
+# Restart with new launch arguments
+ika restart --gpu_mode=guest_swiftshader --cpus=8 --memory_mb=8192
+
+# Show the built-in usage text
+ika help
 ```
 
-The last two commands above add the user to the groups necessary to run the Cuttlefish 
-Virtual Device and reboot the machine to trigger the installation of additional
-kernel modules and apply udev rules.
+`ika start` and `ika restart` pass extra arguments directly to
+`cvd_internal_start`, so you can override launch settings on the command line.
+`stop` calls the matching low-level stop helper (`cvd_internal_stop` or
+`stop_cvd`) with `--clear_instance_dirs` and then cleans up local Cuttlefish
+processes.
+
+By default `ika` uses:
+
+- host tools from `/usr/lib/cuttlefish-common`
+- the packaged LineageOS tree from `/usr/share/cuttlefish-common/lineageos`
+- instance state under `~/.config/cuttlefish`
+- host Bluetooth, with Wi-Fi, netsim, and UWB disabled unless you override them
+
+For this Fedora Asahi workflow, `guest_swiftshader` is the documented GPU mode
+to pass when launching the VM.
+
+## Fedora RPM packages
+
+The repo currently builds these Fedora packages:
+
+* `cuttlefish-base` - Core host binaries, networking helpers, and system
+  services
+* `cuttlefish-user` - Browser-facing operator service
+* `cuttlefish-orchestration` - Host Orchestrator service and nginx config
+* `cuttlefish-integration` - Cloud integration utilities
+* `cuttlefish-defaults` - Optional defaults override service and config
+* `cuttlefish-metrics` - Metrics transmitter binary
+* `cuttlefish-lineageos` - Bundled `lineageos/` tree installed under
+  `/usr/share/cuttlefish-common/lineageos`
+* `cuttlefish-common` - Deprecated compatibility metapackage
+
+For the local Fedora/Asahi workflow, `cuttlefish-base`, `cuttlefish-user`, and
+`cuttlefish-lineageos` are the key packages.
+
+## Notes
+
+On ARM64 Asahi Linux, `guest_swiftshader` is the safe documented GPU mode for
+the packaged workflow in this fork.
+
+`ika` expects your login session to be in `kvm`, `cvdnetwork`, `render`, and
+`video`. Log out fully and back in after changing group membership.
+
+Bazel is installed automatically through Bazelisk by
+[`tools/buildutils/installbazel.sh`](tools/buildutils/installbazel.sh).
+
+The networking helper uses `nftables` when `ebtables` is not installed, which
+matches the default on Asahi Fedora systems.
 
 ## Google Compute Engine
 
-The following script can be used to build a host image for Google Compute Engine:
-
-    device/google/cuttlefish/tools/create_base_image.go
-
-[Check out the AOSP tree](https://source.android.com/setup/build/downloading)
-to obtain the script.
+The current GCE image tooling in this fork lives under `tools/baseimage/`.
+See [tools/baseimage/README.md](tools/baseimage/README.md) for the current
+workflow.
 
 ## Container images
 
-Please read [container/README.md](container/README.md) to know how to build and
-use docker or podman image containing Cuttlefish debian packages.
+Please read [container/README.md](container/README.md) to build and use Docker
+or Podman images containing the Cuttlefish RPM packages.

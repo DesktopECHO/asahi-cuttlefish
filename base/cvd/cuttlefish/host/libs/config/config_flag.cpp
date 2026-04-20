@@ -39,6 +39,7 @@
 #include <json/writer.h>
 #include "absl/log/log.h"
 #include "absl/strings/str_join.h"
+#include "absl/strings/match.h"
 #include "absl/strings/str_split.h"
 
 #include "cuttlefish/common/libs/key_equals_value/key_equals_value.h"
@@ -62,6 +63,55 @@ constexpr auto kDefaultConfig = "phone";
 
 std::string VectorizedFlagValue(const std::vector<std::string>& value) {
   return absl::StrJoin(value, ",");
+}
+
+std::optional<std::string> ScalarConfigValueToFlagValue(const Json::Value& value) {
+  if (value.isString()) {
+    return value.asString();
+  }
+  if (value.isBool()) {
+    return value.asBool() ? "true" : "false";
+  }
+  if (value.isInt64()) {
+    return fmt::format("{}", value.asInt64());
+  }
+  if (value.isUInt64()) {
+    return fmt::format("{}", value.asUInt64());
+  }
+  if (value.isDouble()) {
+    return fmt::format("{}", value.asDouble());
+  }
+  return std::nullopt;
+}
+
+bool UsesSpaceSeparatedArrayValue(std::string_view flag) {
+  return absl::EndsWith(flag, "_args") || flag == "extra_kernel_cmdline";
+}
+
+std::string ConfigValueToFlagValue(std::string_view flag, const Json::Value& value) {
+  if (auto scalar_value = ScalarConfigValueToFlagValue(value);
+      scalar_value.has_value()) {
+    return *scalar_value;
+  }
+  if (value.isArray()) {
+    std::vector<std::string> array_values;
+    array_values.reserve(value.size());
+    for (const Json::Value& entry : value) {
+      auto scalar_value = ScalarConfigValueToFlagValue(entry);
+      if (!scalar_value.has_value()) {
+        Json::StreamWriterBuilder factory;
+        return Json::writeString(factory, value);
+      }
+      if (!scalar_value->empty()) {
+        array_values.push_back(*scalar_value);
+      }
+    }
+    return absl::StrJoin(array_values,
+                         UsesSpaceSeparatedArrayValue(flag) ? " " : ",");
+  }
+
+  Json::StreamWriterBuilder factory;
+  return Json::writeString(factory, value);
 }
 
 class ConfigReader : public FlagFeature {
@@ -150,13 +200,7 @@ class ConfigFlagImpl : public ConfigFlag {
       Json::Value config_values =
           CF_EXPECT(config_reader_.ReadConfig(configs_[i]));
       for (const std::string& flag : config_values.getMemberNames()) {
-        std::string value;
-        if (flag == "custom_actions") {
-          Json::StreamWriterBuilder factory;
-          value = Json::writeString(factory, config_values[flag]);
-        } else {
-          value = config_values[flag].asString();
-        }
+        std::string value = ConfigValueToFlagValue(flag, config_values[flag]);
         flags[flag].push_back(value);
       }
     }

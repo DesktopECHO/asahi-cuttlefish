@@ -16,11 +16,7 @@
 
 set -o errexit -o nounset -o pipefail
 
-sudo apt update
-
-sudo apt install -y cloud-utils
-sudo apt install -y cloud-guest-utils
-sudo apt install -y fdisk
+sudo dnf install -y cloud-utils-growpart cloud-utils util-linux
 
 if [ -b /dev/sdb1 ]; then
   PARTITION_SRC="/dev/sdb1"

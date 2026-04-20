@@ -31,6 +31,7 @@
 #include "absl/log/log.h"
 
 #include "cuttlefish/common/libs/fs/shared_fd.h"
+#include "cuttlefish/common/libs/utils/files.h"
 #include "cuttlefish/common/libs/utils/subprocess.h"
 #include "cuttlefish/host/commands/run_cvd/launch/enable_multitouch.h"
 #include "cuttlefish/host/commands/run_cvd/launch/input_connections_provider.h"
@@ -51,6 +52,13 @@
 namespace cuttlefish {
 
 namespace {
+
+constexpr char kDefaultWebRtcOperatorSocket[] = "/run/cuttlefish/operator";
+
+std::string WebRtcOperatorLibraryPath(const CuttlefishConfig& config) {
+  return DefaultHostArtifactsPath("lib64") + ":" + config.assembly_dir() +
+         "/lib64";
+}
 
 SharedFD CreateUnixInputServer(const std::string& path) {
   auto server =
@@ -232,6 +240,30 @@ class WebRtcServer : public virtual CommandSource,
   Result<std::vector<MonitorCommand>> Commands() override {
     std::vector<MonitorCommand> commands;
 
+    if (config_.sig_server_address() == kDefaultWebRtcOperatorSocket) {
+      if (FileIsSocket(config_.sig_server_address())) {
+        LOG(INFO) << "Using existing WebRTC operator socket at "
+                  << config_.sig_server_address();
+      } else {
+        const auto webrtc_sig_server = WebRtcSigServerBinary();
+        if (FileExists(webrtc_sig_server)) {
+          Command webrtc_operator(webrtc_sig_server);
+          // webrtc_operator resolves cert assets relative to usr/share.
+          webrtc_operator.SetWorkingDirectory(
+              DefaultHostArtifactsPath("usr/share"));
+          webrtc_operator.AddEnvironmentVariable(
+              "LD_LIBRARY_PATH", WebRtcOperatorLibraryPath(config_));
+          commands.emplace_back(std::move(webrtc_operator));
+        } else {
+          LOG(WARNING) << "WebRTC signaling socket "
+                       << config_.sig_server_address()
+                       << " is not available and signaling server binary is "
+                          "missing: "
+                       << webrtc_sig_server;
+        }
+      }
+    }
+
     // Start a TCP proxy to make the host signaling server available on the
     // legacy port.
     Command sig_proxy(WebRtcSigServerProxyBinary());
@@ -315,4 +347,3 @@ launchStreamerComponent() {
 }
 
 }  // namespace cuttlefish
-

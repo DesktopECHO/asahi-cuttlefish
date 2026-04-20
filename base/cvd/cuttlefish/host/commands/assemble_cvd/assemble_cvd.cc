@@ -234,9 +234,9 @@ Result<std::set<std::string>> PreservingOnResume(
   preserving.insert("pflash.img");
   preserving.insert("uboot_env.img");
   preserving.insert(FactoryResetProtectedImage::FileName());
-  preserving.insert(absl::StrCat(MiscImage::kName, ".img"));
+  preserving.insert(std::string(MiscImage::kName));
   preserving.insert("vmmtruststore.img");
-  preserving.insert(absl::StrCat(MetadataImage::kName, ".img"));
+  preserving.insert(std::string(MetadataImage::kName));
   preserving.insert("persistent_vbmeta.img");
   preserving.insert("oemlock_secure");
   preserving.insert("oemlock_insecure");

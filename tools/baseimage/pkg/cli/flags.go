@@ -16,6 +16,7 @@ package cli
 
 import (
 	"fmt"
+	"runtime"
 
 	"github.com/google/android-cuttlefish/tools/baseimage/pkg/gce"
 )
@@ -23,6 +24,7 @@ import (
 const (
 	archX86 = "x86_64"
 	archArm = "arm64"
+	archArmAlias = "aarch64"
 )
 
 type Arch string
@@ -32,8 +34,11 @@ func (a *Arch) String() string {
 }
 
 func (a *Arch) Set(value string) error {
-	if value != archX86 && value != archArm {
+	if value != archX86 && value != archArm && value != archArmAlias {
 		return fmt.Errorf("unknown arch: %q", value)
+	}
+	if value == archArmAlias {
+		value = archArm
 	}
 	*a = Arch(value)
 	return nil
@@ -42,7 +47,12 @@ func (a *Arch) Set(value string) error {
 func (a *Arch) GceArch() gce.Arch {
 	switch string(*a) {
 	case "":
-		return gce.ArchX86
+		switch runtime.GOARCH {
+		case "arm64":
+			return gce.ArchArm
+		default:
+			return gce.ArchX86
+		}
 	case archX86:
 		return gce.ArchX86
 	case archArm:

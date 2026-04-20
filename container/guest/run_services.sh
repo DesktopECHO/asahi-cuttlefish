@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 
-service nginx start
-service cuttlefish-host-resources start
-service cuttlefish-operator start
-service cuttlefish-host_orchestrator start
+systemctl start nginx
+systemctl start cuttlefish-host-resources
+systemctl start cuttlefish-operator
+systemctl start cuttlefish-host_orchestrator
 
 # To keep it running
 tail -f /dev/null

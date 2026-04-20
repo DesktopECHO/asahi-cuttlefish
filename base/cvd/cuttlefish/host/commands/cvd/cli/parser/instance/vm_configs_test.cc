@@ -257,6 +257,90 @@ TEST(VmFlagsParserTest, ParseTwoInstancesMemoryFlagFullJson) {
       << "memory_mb flag is missing or wrongly formatted";
 }
 
+TEST(VmFlagsParserTest, ParseTwoInstancesPreferPerformanceCoresEmptyJson) {
+  const char* test_string = R""""(
+{
+    "instances" :
+    [
+        {
+        },
+        {
+        }
+    ]
+}
+  )"""";
+
+  Json::Value json_configs;
+  std::string json_text(test_string);
+
+  EXPECT_TRUE(ParseJsonString(json_text, json_configs))
+      << "Invalid Json string";
+  auto serialized_data = LaunchCvdParserTester(json_configs);
+  EXPECT_TRUE(serialized_data.ok()) << serialized_data.error().Trace();
+  EXPECT_TRUE(
+      FindConfig(*serialized_data, "--prefer_performance_cores=false,false"))
+      << "prefer_performance_cores flag is missing or wrongly formatted";
+}
+
+TEST(VmFlagsParserTest, ParseTwoInstancesPreferPerformanceCoresPartialJson) {
+  const char* test_string = R""""(
+{
+    "instances" :
+    [
+        {
+        },
+        {
+            "vm": {
+                "prefer_performance_cores": true
+            }
+        }
+    ]
+}
+  )"""";
+
+  Json::Value json_configs;
+  std::string json_text(test_string);
+
+  EXPECT_TRUE(ParseJsonString(json_text, json_configs))
+      << "Invalid Json string";
+  auto serialized_data = LaunchCvdParserTester(json_configs);
+  EXPECT_TRUE(serialized_data.ok()) << serialized_data.error().Trace();
+  EXPECT_TRUE(
+      FindConfig(*serialized_data, "--prefer_performance_cores=false,true"))
+      << "prefer_performance_cores flag is missing or wrongly formatted";
+}
+
+TEST(VmFlagsParserTest, ParseTwoInstancesPreferPerformanceCoresFullJson) {
+  const char* test_string = R""""(
+{
+    "instances" :
+    [
+        {
+            "vm": {
+                "prefer_performance_cores": true
+            }
+        },
+        {
+            "vm": {
+                "prefer_performance_cores": true
+            }
+        }
+    ]
+}
+  )"""";
+
+  Json::Value json_configs;
+  std::string json_text(test_string);
+
+  EXPECT_TRUE(ParseJsonString(json_text, json_configs))
+      << "Invalid Json string";
+  auto serialized_data = LaunchCvdParserTester(json_configs);
+  EXPECT_TRUE(serialized_data.ok()) << serialized_data.error().Trace();
+  EXPECT_TRUE(
+      FindConfig(*serialized_data, "--prefer_performance_cores=true,true"))
+      << "prefer_performance_cores flag is missing or wrongly formatted";
+}
+
 TEST(VmFlagsParserTest, ParseTwoInstancesSdCardFlagEmptyJson) {
   const char* test_string = R""""(
 {

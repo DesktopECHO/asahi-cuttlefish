@@ -52,7 +52,8 @@ using openwrtcontrolserver::OpenwrtIpaddrReply;
 
 DEFINE_string(grpc_uds_path, "", "grpc_uds_path");
 DEFINE_bool(bridged_wifi_tap, false,
-            "True for using cvd-wtap-XX, false for using cvd-wifiap-XX");
+            "True for bridged Wi-Fi tap mode, false for non-bridged Wi-Fi tap "
+            "mode");
 DEFINE_string(webrtc_device_id, "", "The device ID in WebRTC like cvd-1");
 DEFINE_string(launcher_log_path, "", "File path for launcher.log");
 DEFINE_string(openwrt_log_path, "", "File path for crosvm_openwrt.log");

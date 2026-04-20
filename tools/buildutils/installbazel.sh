@@ -14,29 +14,29 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Install bazel (https://bazel.build/install/ubuntu)
+# Install Bazel on Fedora.
 
 set -e
 
+BAZELISK_VERSION=v1.25.0
+
 function install_bazel_x86_64() {
-  echo "Installing bazel"
-  apt install apt-transport-https curl gnupg -y
-  curl -fsSL https://bazel.build/bazel-release.pub.gpg | gpg --dearmor >bazel-archive-keyring.gpg
-  mv bazel-archive-keyring.gpg /usr/share/keyrings
-  echo "deb [arch=amd64 signed-by=/usr/share/keyrings/bazel-archive-keyring.gpg] https://storage.googleapis.com/bazel-apt stable jdk1.8" | tee /etc/apt/sources.list.d/bazel.list
-  # bazel needs the zip command to gather test outputs but doesn't depend on it
-  apt-get update && apt-get install -y bazel zip unzip
+  dnf install -y curl unzip zip
+  tmpdir="$(mktemp -d -t bazel_installer_XXXXXX)"
+  trap 'rm -rf "$tmpdir"' EXIT
+  pushd "${tmpdir}"
+  curl -fsSLo bazel "https://github.com/bazelbuild/bazelisk/releases/download/${BAZELISK_VERSION}/bazelisk-linux-amd64"
+  install -m 0755 bazel /usr/local/bin/bazel
+  popd
 }
 
 function install_bazel_aarch64() {
-  BAZELISK_VERSION=v1.19.0
-  apt install wget
-  tmpdir="$(mktemp -t -d bazel_installer_XXXXXX)"
-  trap "rm -rf $tmpdir" EXIT
+  dnf install -y curl unzip zip
+  tmpdir="$(mktemp -d -t bazel_installer_XXXXXX)"
+  trap 'rm -rf "$tmpdir"' EXIT
   pushd "${tmpdir}"
-  wget "https://github.com/bazelbuild/bazelisk/releases/download/${BAZELISK_VERSION}/bazelisk-linux-arm64"
-  mv bazelisk-linux-arm64 /usr/local/bin/bazel
-  chmod 0755 /usr/local/bin/bazel
+  curl -fsSLo bazel "https://github.com/bazelbuild/bazelisk/releases/download/${BAZELISK_VERSION}/bazelisk-linux-arm64"
+  install -m 0755 bazel /usr/local/bin/bazel
   popd
 }
 

@@ -16,6 +16,7 @@
 
 #include "cuttlefish/host/libs/image_aggregator/sparse_image.h"
 
+#include <unistd.h>
 #include <sys/file.h>
 
 #include <fstream>
@@ -27,6 +28,7 @@
 #include <sparse/sparse.h>
 
 #include "cuttlefish/common/libs/fs/shared_fd.h"
+#include "cuttlefish/common/libs/utils/files.h"
 #include "cuttlefish/common/libs/utils/subprocess.h"
 #include "cuttlefish/host/libs/config/known_paths.h"
 #include "cuttlefish/posix/rename.h"
@@ -69,16 +71,25 @@ Result<bool> IsSparseImage(const std::string& image_path) {
   return buffer == kAndroidSparseImageMagic;
 }
 
-Result<void> ForceRawImage(const std::string& image_path) {
+Result<std::string> ForceRawImage(const std::string& image_path,
+                                  const std::string& output_directory) {
   if (!CF_EXPECT(IsSparseImage(image_path))) {
-    return {};
+    return image_path;
   }
   SharedFD fd = CF_EXPECT(AcquireLockForImage(image_path));
   if (!CF_EXPECT(IsSparseImage(image_path))) {
-    return {};
+    return image_path;
   }
 
-  std::string tmp_raw_image_path = image_path + ".raw";
+  std::string raw_image_path = image_path;
+  std::string tmp_raw_image_path = image_path + ".raw.tmp";
+  if (access(android::base::Dirname(image_path).c_str(), W_OK) != 0) {
+    CF_EXPECT(!output_directory.empty());
+    CF_EXPECT(EnsureDirectoryExists(output_directory));
+    raw_image_path =
+        output_directory + "/" + android::base::Basename(image_path) + ".raw";
+    tmp_raw_image_path = raw_image_path + ".tmp";
+  }
   // Use simg2img to convert sparse image to raw images.
   int simg2img_status =
       Execute({Simg2ImgBinary(), image_path, tmp_raw_image_path});
@@ -87,13 +98,17 @@ Result<void> ForceRawImage(const std::string& image_path) {
                "Unable to convert Android sparse image '"
                    << image_path << "' to raw image: " << simg2img_status);
 
-  // Replace the original sparse image with the raw image.
-  // `rename` can fail if these are on different mounts, but they are files
-  // within the same directory so they can only be in different mounts if one
-  // is a bind mount, in which case `rename` won't work anyway.
-  CF_EXPECT(Rename(tmp_raw_image_path, image_path));
+  if (raw_image_path == image_path) {
+    // Replace the original sparse image with the raw image.
+    // `rename` can fail if these are on different mounts, but they are files
+    // within the same directory so they can only be in different mounts if one
+    // is a bind mount, in which case `rename` won't work anyway.
+    CF_EXPECT(Rename(tmp_raw_image_path, image_path));
+  } else {
+    CF_EXPECT(Rename(tmp_raw_image_path, raw_image_path));
+  }
 
-  return {};
+  return raw_image_path;
 }
 
 struct AndroidSparseImage::Impl {

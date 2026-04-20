@@ -27,7 +27,7 @@ container_image=$1
 # mounted attached disk. With this approach, docker installed on chroot
 # environment can recognize and use docker image when dockerd starts to run
 # on running GCE instance with GCE image created via this script.
-sudo apt install -y docker.io jq
+sudo dnf install -y moby-engine jq
 sudo systemctl stop docker.socket docker.service
 if [ -f /etc/docker/daemon.json ]; then
   sudo jq '.["data-root"] = "/mnt/image/var/lib/docker"' /etc/docker/daemon.json \
@@ -40,4 +40,4 @@ sudo systemctl start docker.socket docker.service
 sudo docker load --input "$container_image"
 sudo systemctl stop docker.socket docker.service
 
-sudo chroot /mnt/image /usr/bin/apt install -y docker.io
+sudo chroot /mnt/image /usr/bin/dnf install -y moby-engine

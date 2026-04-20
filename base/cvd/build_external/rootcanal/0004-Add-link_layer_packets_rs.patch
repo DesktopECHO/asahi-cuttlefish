@@ -12,19 +12,19 @@ Bug: b/402294843
  1 file changed, 9 insertions(+)
 
 diff --git a/packets/BUILD b/packets/BUILD
-index 14d1db5..10d4c74 100644
+index 4ef8ca2..de98829 100644
 --- a/packets/BUILD
 +++ b/packets/BUILD
-@@ -29,6 +29,15 @@ genrule(
-     tools = ["@crates//:pdl-compiler__pdlc"],
+@@ -33,6 +33,15 @@ genrule(
+     tools = [":pdlc"],
  )
  
 +genrule(
 +    name = "link_layer_packets_rs",
-+    cmd = "$(execpath @crates//:pdl-compiler__pdlc) --output-format rust_legacy $(location link_layer_packets.pdl) > $(location link_layer_packets.rs)",
++    cmd = "$(location :pdlc) --output-format rust_legacy $(location link_layer_packets.pdl) > $(location link_layer_packets.rs)",
 +    outs = ["link_layer_packets.rs"],
 +    srcs = ["link_layer_packets.pdl"],
-+    tools = ["@crates//:pdl-compiler__pdlc"],
++    tools = [":pdlc"],
 +    visibility = ["//visibility:public"],
 +)
 +
@@ -33,4 +33,3 @@ index 14d1db5..10d4c74 100644
      args = [
 -- 
 2.51.0.rc1.167.g924127e9c0-goog
-

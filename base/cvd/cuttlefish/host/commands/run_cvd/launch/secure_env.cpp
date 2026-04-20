@@ -29,6 +29,15 @@
 
 namespace cuttlefish {
 
+namespace {
+
+std::string SecureEnvLibraryPath(const CuttlefishConfig& config) {
+  return DefaultHostArtifactsPath("lib64") + ":" + config.assembly_dir() +
+         "/lib64";
+}
+
+}  // namespace
+
 Result<MonitorCommand> SecureEnv(
     const CuttlefishConfig& config,
     const CuttlefishConfig::InstanceSpecific& instance,
@@ -85,6 +94,8 @@ Result<MonitorCommand> SecureEnv(
   bool enable_jcard_simulator =
       secure_hals.count(SecureHal::kGuestStrongboxInsecure) > 0;
   command.AddParameter("--enable_jcard_simulator=", enable_jcard_simulator);
+  command.AddEnvironmentVariable("LD_LIBRARY_PATH",
+                                 SecureEnvLibraryPath(config));
 
   return command;
 }

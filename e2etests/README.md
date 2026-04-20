@@ -2,8 +2,10 @@
 
 ## Orchestration tests
 
-The orchestration e2e tests require an environment with `host orchestator` service
-and `cvd` installed.
+The orchestration e2e tests require an environment with the `host orchestrator`
+service and `cvd` installed.
+
+Run the test command from the `e2etests` directory.
 
 ```
 bazel test --local_test_jobs=1 orchestration/...

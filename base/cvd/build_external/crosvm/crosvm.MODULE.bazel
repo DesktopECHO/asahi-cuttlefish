@@ -1,6 +1,8 @@
 # this needs to be at parity with with build_external/crosvm/crosvm.config.toml
 CROSVM_REMOTE = "https://chromium.googlesource.com/crosvm/crosvm"
-CROSVM_REV = "bc84c8bd6ce078e251594aa1af9e84932c5d0d81"
+CROSVM_REV = "02e797273075c089cf075e7acb4d549323a167fb"
+MINIGBM_REMOTE = "https://chromium.googlesource.com/chromiumos/platform/minigbm"
+MINIGBM_REV = "9ccd5b3051a666a5c98582e36961e591e7b0784a"
 
 # note that this won't use the same source checkout as the git_repository directive below
 #
@@ -21,21 +23,30 @@ crosvm_bin.spec(
         "audio_aaudio",
         "balloon",
         "composite-disk",
-        "config-file",
+        "ffmpeg",
         "fs_runtime_ugid_map",
         "gdb",
-        "gdbstub",
-        "gdbstub_arch",
         "geniezone",
         "gfxstream",
+        "gfxstream_display",
         "gpu",
         "gpu_display",
         "gunyah",
         "libaaudio_stub",
         "media",
         "net",
+        "pci-hotplug",
+        "pvclock",
         "qcow",
+        "stats",
+        "tokio",
         "usb",
+        "vaapi",
+        "video-decoder",
+        "video-encoder",
+        "virgl_renderer",
+        "wl-dmabuf",
+        "zstd-disk",
     ],
     # TODO: schuffelen - fix the sandbox
     git = CROSVM_REMOTE,
@@ -56,10 +67,23 @@ crosvm_bin.annotation(
 )
 
 crosvm_bin.annotation(
+    crate = "ffmpeg",
+    build_script_env = {
+        # Fedora's ffmpeg headers are installed under /usr/include/ffmpeg, but
+        # crosvm's build.rs invokes bindgen without forwarding pkg-config's
+        # include path. Pass it explicitly so bindings generation can find
+        # libavcodec/libavutil/libswscale headers in the Bazel sandbox.
+        "BINDGEN_EXTRA_CLANG_ARGS": "-I/usr/include/ffmpeg",
+    },
+)
+
+crosvm_bin.annotation(
     crate = "rutabaga_gfx",
     deps = [
         "@@//:gfxstream_backend_import",
     ],
+    build_script_data = ["@@//:minigbm_sources"],
+    build_script_rundir = ".",
     rustc_flags = [
         # Look for shared libraries in the same directory as this object.
         "-Clink-arg=-Wl,-rpath,$$ORIGIN",
@@ -68,7 +92,12 @@ crosvm_bin.annotation(
         # Disable the build script from trying to automatically locate
         # Gfxstream as the dep is directly provided above.
         "CARGO_FEATURE_GFXSTREAM_STUB": "blah",
+        # Force rutabaga_gfx to use the system virglrenderer package instead of
+        # expecting crosvm's third_party/virglrenderer source checkout.
+        "CROSVM_USE_SYSTEM_VIRGLRENDERER": "1",
     },
+    patch_args = ["-p1"],
+    patches = ["@//build_external/crosvm:PATCH.rutabaga_gfx_build_rs.patch"],
 )
 
 crosvm_bin.annotation(
@@ -86,7 +115,7 @@ crosvm_bin.annotation(
 crosvm_bin.annotation(
     crate = "minijail-sys",
     build_script_data = ["@@//:minijail_sources"],
-    build_script_rundir = "external/+_repo_rules2+crosvm/third_party/minijail",
+    build_script_rundir = ".",
     patch_args = ["-p1"],
     # crates_universe checks out only a subdirectory of the repository, so the
     # file paths in this patch are relative to that directory.
@@ -122,5 +151,15 @@ git_repository(
     remote = CROSVM_REMOTE,
     init_submodules = True,
     patch_strip = 1,
-    patches = ["@//build_external/crosvm:PATCH.minijail-sys_common_mk.patch"],
+    patches = [
+        "@//build_external/crosvm:PATCH.minijail-sys_common_mk.patch",
+        "@//build_external/crosvm:PATCH.minijail-blktracesetup2.patch",
+    ],
+)
+
+git_repository(
+    name = "minigbm",
+    build_file = "@//build_external/crosvm:BUILD.minigbm.bazel",
+    commit = MINIGBM_REV,
+    remote = MINIGBM_REMOTE,
 )

@@ -42,11 +42,14 @@ async function ConnectDevice(deviceId, serverConnector) {
     }
   }, intervalMs);
 
-  let module = await import('./cf_webrtc.js');
-  let deviceConnection = await module.Connect(deviceId, serverConnector);
-  console.info('Connected to ' + deviceId);
-  clearInterval(connectionInterval);
-  return deviceConnection;
+  try {
+    let module = await import('./cf_webrtc.js');
+    let deviceConnection = await module.Connect(deviceId, serverConnector);
+    console.info('Connected to ' + deviceId);
+    return deviceConnection;
+  } finally {
+    clearInterval(connectionInterval);
+  }
 }
 
 function setupMessages() {
@@ -183,14 +186,13 @@ class DeviceControlApp {
         document.getElementById('record_video_btn'),
         enabled => this.#onVideoCaptureToggle(enabled));
 
-    // Enable non-ADB buttons, these buttons use data channels to communicate
-    // with the host, so they're ready to go as soon as the webrtc connection is
-    // established.
+    this.#showDeviceUI();
+
+    // Enable non-ADB buttons after the UI is built so custom buttons created
+    // in #showDeviceUI() are included.
     this.#getControlPanelButtons()
         .filter(b => !b.dataset.adb)
         .forEach(b => b.disabled = false);
-
-    this.#showDeviceUI();
   }
 
   #addAudioStream(stream_id, audioPlaybackCtrl) {
@@ -553,7 +555,7 @@ class DeviceControlApp {
   #setOrientation(z) {
     const sliders = document.getElementsByClassName('rotation-slider-range');
     const values = document.getElementsByClassName('rotation-slider-value');
-    if (sliders.length != values.length && sliders.length != 3) {
+    if (sliders.length != values.length || sliders.length != 3) {
       return;
     }
     // Set XY axes to 0 (upright position).

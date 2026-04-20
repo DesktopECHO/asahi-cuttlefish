@@ -19,30 +19,24 @@ set -o errexit
 
 arch=$(uname -m)
 nvidia_arch=${arch}
-[ "${arch}" = "x86_64" ] && arch=amd64
-[ "${arch}" = "aarch64" ] && arch=arm64
 
 # NVIDIA driver needs dkms which requires /dev/fd
 if [ ! -d /dev/fd ]; then
   ln -s /proc/self/fd /dev/fd
 fi
 
-# Using "Depends:" is more reliable than "Version:", because it works for
-# backported ("bpo") kernels as well. NOTE: "Package" can be used instead
-# if we don't install the metapackage ("linux-image-cloud-${arch}") but a
-# specific version in the future
-kmodver=$(dpkg -s linux-image-cloud-${arch} | grep ^Depends: | \
-          cut -d: -f2 | cut -d" " -f2 | sed 's/linux-image-//')
+# Match the most recently installed Fedora kernel.
+kmodver=$(rpm -q kernel-core --qf '%{VERSION}-%{RELEASE}.%{ARCH}\n' | tail -1 | sed 's/^kernel-core-//')
 
-apt-get install -y wget
+dnf install -y wget
 
 # Dependencies for nvidia-installer
-apt-get install -y \
-  $(echo linux-headers-${kmodver}) \
+dnf install -y \
+  "kernel-devel-${kmodver}" \
   dkms \
   libglvnd-dev \
-  libc6-dev \
-  pkg-config
+  glibc-devel \
+  pkgconf-pkg-config
 
 nvidia_version=570.158.01
 

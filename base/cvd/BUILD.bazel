@@ -60,6 +60,13 @@ alias(
     visibility = ["//visibility:public"],
 )
 
+# for the external minigbm source used by rutabaga_gfx wl-dmabuf builds
+alias(
+    name = "minigbm_sources",
+    actual = "@minigbm//:minigbm_sources",
+    visibility = ["//visibility:public"],
+)
+
 # Create an alias so that crosvm's rutabaga_gfx crate has visibility into the
 # gfxstream repository.
 alias(

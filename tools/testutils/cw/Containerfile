@@ -1,10 +1,9 @@
-FROM debian:bookworm-20250811 AS base
+FROM fedora:43 AS base
 
-ENV DEBIAN_FRONTEND=noninteractive
 ENV OVERRIDE_BAZEL_WRAPPER_DOWNLOAD_DIR=/tmp/cw_bazel
 
-RUN apt-get update && apt-get upgrade -y
-RUN apt-get install -y sudo systemd init systemd-journal-remote nginx jq adb
+RUN dnf -y upgrade --refresh
+RUN dnf -y install sudo systemd systemd-journal-remote nginx jq android-tools
 
 RUN groupadd kvm
 COPY tools/testutils/cw/setup.service /etc/systemd/system/setup.service
@@ -17,11 +16,11 @@ RUN --mount=source=.,target=/mnt,type=bind \
 
 FROM with_bazel AS with_cuttlefish_packages
 
-RUN --mount=source=.,target=/mnt,type=bind apt-get install -y \
-  /mnt/cuttlefish-base_*_*64.deb \
-  /mnt/cuttlefish-metrics_*_*64.deb \
-  /mnt/cuttlefish-user_*_*64.deb \
-  /mnt/cuttlefish-orchestration_*_*64.deb
+RUN --mount=source=.,target=/mnt,type=bind dnf -y install \
+  /mnt/cuttlefish-base-*.rpm \
+  /mnt/cuttlefish-metrics-*.rpm \
+  /mnt/cuttlefish-user-*.rpm \
+  /mnt/cuttlefish-orchestration-*.rpm
 
 FROM with_cuttlefish_packages
 

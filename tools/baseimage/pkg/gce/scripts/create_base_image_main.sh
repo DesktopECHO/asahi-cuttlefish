@@ -17,21 +17,15 @@
 set -o errexit -o nounset -o pipefail
 
 arch=$(uname -m)
-[ "${arch}" = "x86_64" ] && arch=amd64
-[ "${arch}" = "aarch64" ] && arch=arm64
+[ "${arch}" = "x86_64" ] && rpm_arch=x86_64
+[ "${arch}" = "aarch64" ] && rpm_arch=aarch64
 
-sudo apt-get update
-sudo apt-get upgrade -y
+sudo dnf upgrade -y --refresh
 
-# Avoids blocking "Default mirror not found" popup prompt when pbuilder is installed.
-echo "pbuilder        pbuilder/mirrorsite     string  https://deb.debian.org/debian" | sudo debconf-set-selections
-
-kmodver_begin=$(sudo chroot /mnt/image/ /usr/bin/dpkg -s linux-image-cloud-${arch} | grep ^Depends: | \
-  cut -d: -f2 | cut -d" " -f2 | sed 's/linux-image-//')
+kmodver_begin=$(sudo chroot /mnt/image /usr/bin/rpm -q kernel-core --qf '%{VERSION}-%{RELEASE}.%{ARCH}\n' | tail -1)
 echo "IMAGE STARTS WITH KERNEL: ${kmodver_begin}"
 
-sudo chroot /mnt/image /usr/bin/apt update
-sudo chroot /mnt/image /usr/bin/apt upgrade -y
+sudo chroot /mnt/image /usr/bin/dnf upgrade -y --refresh
 
 # Disable systemd mounting tmpfs at /tmp due backwards compatibility issues.
 # TODO(b/458388172): Remove line if cvd no longer stores artifacts
@@ -39,19 +33,18 @@ sudo chroot /mnt/image /usr/bin/apt upgrade -y
 sudo chroot /mnt/image /usr/bin/systemctl mask tmp.mount
 
 # Avoid automatic updates during tests.
-# https://manpages.debian.org/trixie/unattended-upgrades/unattended-upgrade.8.en.html
-sudo chroot /mnt/image /usr/bin/apt purge -y unattended-upgrades
+sudo chroot /mnt/image /usr/bin/systemctl disable --now dnf-makecache.timer dnf-automatic.timer >/dev/null 2>&1 || true
 
 # Install JDK.
 #
 # JDK it's not required to launch a CF device. It's required to run
 # some of Tradefed tests that are run from the CF host side like
 # some CF gfx tests, adb tests, etc.
-if [[ "${arch}" == "amd64" ]]; then
+if [[ "${rpm_arch}" == "x86_64" ]]; then
   JDK_ARCH=x64
   # https://download.java.net/java/GA/jdk21.0.2/f2283984656d49d69e91c558476027ac/13/GPL/openjdk-21.0.2_linux-x64_bin.tar.gz.sha256
   export JDK21_SHA256SUM=a2def047a73941e01a73739f92755f86b895811afb1f91243db214cff5bdac3f
-elif [[ "${arch}" == "arm64" ]]; then
+elif [[ "${rpm_arch}" == "aarch64" ]]; then
   JDK_ARCH=aarch64
   # https://download.java.net/java/GA/jdk21.0.2/f2283984656d49d69e91c558476027ac/13/GPL/openjdk-21.0.2_linux-aarch64_bin.tar.gz.sha256
   export JDK21_SHA256SUM=08db1392a48d4eb5ea5315cf8f18b89dbaf36cda663ba882cf03c704c9257ec2
@@ -71,17 +64,14 @@ echo 'PATH=$JAVA_HOME/bin:$PATH' | sudo chroot /mnt/image /usr/bin/tee -a /etc/p
 echo "PATH=$ENV_JAVA_HOME/bin:/usr/local/bin:/usr/bin:/bin:/usr/local/games:/usr/games" | sudo chroot /mnt/image /usr/bin/tee -a /etc/environment >/dev/null
 
 # install tools dependencies
-sudo chroot /mnt/image /usr/bin/apt install -y unzip bzip2 lzop
-sudo chroot /mnt/image /usr/bin/apt install -y aapt
-sudo chroot /mnt/image /usr/bin/apt install -y adb # needed by tradefed
-sudo chroot /mnt/image /usr/bin/apt install -y screen # needed by tradefed
+sudo chroot /mnt/image /usr/bin/dnf install -y unzip bzip2 lzop
+sudo chroot /mnt/image /usr/bin/dnf install -y android-tools
+sudo chroot /mnt/image /usr/bin/dnf install -y screen
 
 sudo chroot /mnt/image /usr/bin/find /home -ls
 
-# update QEMU version to most recent backport
-sudo chroot /mnt/image /usr/bin/apt install -y --only-upgrade qemu-system-x86
-sudo chroot /mnt/image /usr/bin/apt install -y --only-upgrade qemu-system-arm
-sudo chroot /mnt/image /usr/bin/apt install -y --only-upgrade qemu-system-misc
+# install Fedora QEMU packages expected by Cuttlefish
+sudo chroot /mnt/image /usr/bin/dnf install -y qemu-system-aarch64 qemu-system-x86
 
 # Install GPU driver dependencies
 sudo cp install_nvidia.sh /mnt/image/
@@ -89,11 +79,11 @@ sudo chroot /mnt/image /usr/bin/bash install_nvidia.sh
 sudo rm /mnt/image/install_nvidia.sh
 
 # Vulkan loader
-sudo chroot /mnt/image /usr/bin/apt install -y libvulkan1
+sudo chroot /mnt/image /usr/bin/dnf install -y vulkan-loader
 
 # Wayland-server needed to have Nvidia driver fail gracefully when attempting to
 # use the EGL API on GCE instances without a GPU.
-sudo chroot /mnt/image /usr/bin/apt install -y libwayland-server0
+sudo chroot /mnt/image /usr/bin/dnf install -y wayland
 
 # Clean up the builder's version of resolv.conf
 sudo rm /mnt/image/etc/resolv.conf
@@ -105,8 +95,7 @@ sudo tee /mnt/image/etc/sysctl.d/80-nsjail.conf >/dev/null <<EOF
 kernel.unprivileged_userns_clone=1
 EOF
 
-kmodver_end=$(sudo chroot /mnt/image/ /usr/bin/dpkg -s linux-image-cloud-${arch} | grep ^Depends: | \
-  cut -d: -f2 | cut -d" " -f2 | sed 's/linux-image-//')
+kmodver_end=$(sudo chroot /mnt/image /usr/bin/rpm -q kernel-core --qf '%{VERSION}-%{RELEASE}.%{ARCH}\n' | tail -1)
 echo "IMAGE ENDS WITH KERNEL: ${kmodver_end}"
 
 if [ "${kmodver_begin}" != "${kmodver_end}" ]; then

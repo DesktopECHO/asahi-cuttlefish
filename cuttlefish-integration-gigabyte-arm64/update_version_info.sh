@@ -3,12 +3,12 @@
 set -e
 
 # should update tags before do anything
-echo "step 1: parse changelog to get the versions"
-#rm -f ./changelog
+echo "step 1: write version information"
 CHANGELOG=$(mktemp)
-version=$(dpkg-parsechangelog --show-field version -c 1 -o 0 -l debian/changelog)
-distribution=$(dpkg-parsechangelog --show-field distribution -c 1 -o 0 -l debian/changelog)
-changes=$(dpkg-parsechangelog -c 1 -o 0 -l debian/changelog)
+version=$(tr -d '\n' < ../packaging/VERSION)
+distribution=fedora
+changes="Version: ${version}
+Distribution: ${distribution}"
 echo "" >> "${CHANGELOG}"
 echo "$changes" >> "${CHANGELOG}"
 

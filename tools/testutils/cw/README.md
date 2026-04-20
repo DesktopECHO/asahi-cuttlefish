@@ -4,7 +4,7 @@
 
 **IMPORTANT** Do not use rootfull podman in your development workflow, use rootless podman.
 
-Github Actions does not offer a Debian based runner, using Podman we can create Debian based
+Github Actions does not offer a Fedora based runner, using Podman we can create Fedora based
 containers that mimics a real host behavior.
 
 
@@ -12,8 +12,8 @@ containers that mimics a real host behavior.
 
 The build image command must be run at the root of the `android-cuttlefish` repo directory.
 
-Image creation expects cuttlefish debian packages: `cuttlefish-base_*_*64.deb`,
-`cuttlefish-user_*_*64.deb` and `cuttlefish-orchestration_*_*64.deb` in the
+Image creation expects cuttlefish RPM packages: `cuttlefish-base-*.rpm`,
+`cuttlefish-user-*.rpm` and `cuttlefish-orchestration-*.rpm` in the
 current directory.
 
 ```

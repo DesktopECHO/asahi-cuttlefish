@@ -1,0 +1,1681 @@
+#include "screen.h"
+
+#include <assert.h>
+#include <string.h>
+#include <SDL3/SDL.h>
+
+#include "events.h"
+#include "icon.h"
+#include "options.h"
+#include "util/log.h"
+#include "util/sdl.h"
+
+#define DISPLAY_MARGINS 96
+#define FLEX_DISPLAY_RESIZE_MIN_INTERVAL SC_TICK_FROM_MS(250)
+#define FLEX_DISPLAY_STRETCH_EVENT_DELAY SC_TICK_FROM_MS(250)
+#define FLEX_DISPLAY_STRETCH_PENDING_MAX SC_TICK_FROM_MS(1000)
+#define FLEX_DISPLAY_SIZE_MATCH_TOLERANCE 16
+#define SC_WINDOW_MIN_WIDTH 360
+#define SC_WINDOW_MIN_HEIGHT 480
+#define SC_WINDOW_RESIZE_BORDER 12
+#define SC_WINDOW_DRAG_REGION_WIDTH 150
+#define SC_WINDOW_DRAG_REGION_HEIGHT 28
+#define SC_WINDOW_DRAG_HOLD_THRESHOLD SC_TICK_FROM_MS(220)
+#define SC_WINDOW_HOTSPOT_CLICK_MOVE_THRESHOLD 8.0f
+#define FLEX_DISPLAY_BLUR_OFFSET 3.0f
+#define FLEX_DISPLAY_BLUR_ALPHA 10
+
+#define DOWNCAST(SINK) container_of(SINK, struct sc_screen, frame_sink)
+
+static void
+set_aspect_ratio(struct sc_screen *screen, struct sc_size content_size) {
+    assert(content_size.width && content_size.height);
+
+    if (screen->window_aspect_ratio_lock) {
+        float ar = (float) content_size.width / content_size.height;
+        bool ok = SDL_SetWindowAspectRatio(screen->window, ar, ar);
+        if (!ok) {
+            LOGW("Could not set window aspect ratio: %s", SDL_GetError());
+        }
+    }
+}
+
+static inline struct sc_size
+get_oriented_size(struct sc_size size, enum sc_orientation orientation) {
+    struct sc_size oriented_size;
+    if (sc_orientation_is_swap(orientation)) {
+        oriented_size.width = size.height;
+        oriented_size.height = size.width;
+    } else {
+        oriented_size.width = size.width;
+        oriented_size.height = size.height;
+    }
+    return oriented_size;
+}
+
+static inline bool
+is_windowed(struct sc_screen *screen) {
+    return !(SDL_GetWindowFlags(screen->window) & (SDL_WINDOW_FULLSCREEN
+                                                 | SDL_WINDOW_MINIMIZED
+                                                 | SDL_WINDOW_MAXIMIZED));
+}
+
+static inline bool
+sc_screen_is_drag_hotspot(float x, float y) {
+    return x >= 0 && y >= 0
+        && x < SC_WINDOW_DRAG_REGION_WIDTH
+        && y < SC_WINDOW_DRAG_REGION_HEIGHT;
+}
+
+static void
+sc_screen_finalize_hotspot_press(struct sc_screen *screen) {
+    if (screen->hotspot_press_started_in_hotspot) {
+        screen->hotspot_drag_pending = screen->hotspot_dragged;
+    }
+
+    screen->hotspot_button_down = false;
+    screen->hotspot_press_started_in_hotspot = false;
+    screen->hotspot_dragged = false;
+}
+
+static void
+sc_screen_poll_hotspot_state(struct sc_screen *screen) {
+    if (!screen->hotspot_button_down) {
+        return;
+    }
+
+    SDL_MouseButtonFlags buttons = SDL_GetGlobalMouseState(NULL, NULL);
+    bool left_down = buttons & SDL_BUTTON_LMASK;
+    if (!left_down) {
+        sc_screen_finalize_hotspot_press(screen);
+        return;
+    }
+
+    // Long press in hotspot is treated as drag.
+    if (!screen->hotspot_dragged) {
+        sc_tick now = sc_tick_now();
+        if (now - screen->hotspot_press_tick > SC_WINDOW_DRAG_HOLD_THRESHOLD) {
+            screen->hotspot_dragged = true;
+        }
+    }
+}
+
+static SDL_HitTestResult SDLCALL
+sc_screen_window_hit_test(SDL_Window *window, const SDL_Point *area,
+                          void *data) {
+    (void) window;
+
+    struct sc_screen *screen = data;
+    SDL_MouseButtonFlags buttons = SDL_GetGlobalMouseState(NULL, NULL);
+    bool left_down = buttons & SDL_BUTTON_LMASK;
+    bool in_hotspot = sc_screen_is_drag_hotspot(area->x, area->y);
+
+    if (left_down && !screen->hotspot_button_down) {
+        screen->hotspot_button_down = true;
+        screen->hotspot_press_started_in_hotspot = in_hotspot;
+        screen->hotspot_dragged = false;
+        screen->hotspot_press_tick = sc_tick_now();
+    } else if (!left_down && screen->hotspot_button_down) {
+        sc_screen_finalize_hotspot_press(screen);
+    }
+
+    uint64_t flags = SDL_GetWindowFlags(screen->window);
+    bool borderless = flags & SDL_WINDOW_BORDERLESS;
+    bool resizable = flags & SDL_WINDOW_RESIZABLE;
+    bool constrained = flags & (SDL_WINDOW_FULLSCREEN | SDL_WINDOW_MAXIMIZED);
+    if (!borderless || constrained) {
+        return SDL_HITTEST_NORMAL;
+    }
+
+    int w;
+    int h;
+    if (!SDL_GetWindowSize(screen->window, &w, &h)) {
+        return SDL_HITTEST_NORMAL;
+    }
+
+    const int border = SC_WINDOW_RESIZE_BORDER;
+    bool left = area->x < border;
+    bool right = area->x >= w - border;
+    bool top = area->y < border;
+    bool bottom = area->y >= h - border;
+
+    if (resizable) {
+        if (top && left) {
+            return SDL_HITTEST_RESIZE_TOPLEFT;
+        }
+        if (top && right) {
+            return SDL_HITTEST_RESIZE_TOPRIGHT;
+        }
+        if (bottom && left) {
+            return SDL_HITTEST_RESIZE_BOTTOMLEFT;
+        }
+        if (bottom && right) {
+            return SDL_HITTEST_RESIZE_BOTTOMRIGHT;
+        }
+    }
+
+    // Custom drag hotspot when title bar/decorations are hidden.
+    // Give it priority over top/left edge resize (except corners above), so
+    // compositor-driven drag starts immediately.
+    if (in_hotspot) {
+        return SDL_HITTEST_DRAGGABLE;
+    }
+
+    if (resizable) {
+        if (top) {
+            return SDL_HITTEST_RESIZE_TOP;
+        }
+        if (bottom) {
+            return SDL_HITTEST_RESIZE_BOTTOM;
+        }
+        if (left) {
+            return SDL_HITTEST_RESIZE_LEFT;
+        }
+        if (right) {
+            return SDL_HITTEST_RESIZE_RIGHT;
+        }
+    }
+
+    return SDL_HITTEST_NORMAL;
+}
+
+// get the preferred display bounds (i.e. the screen bounds with some margins)
+static bool
+get_preferred_display_bounds(struct sc_size *bounds) {
+    SDL_Rect rect;
+    SDL_DisplayID display = SDL_GetPrimaryDisplay();
+    if (!display) {
+        LOGW("Could not get primary display: %s", SDL_GetError());
+        return false;
+    }
+
+    bool ok = SDL_GetDisplayUsableBounds(display, &rect);
+    if (!ok) {
+        LOGW("Could not get display usable bounds: %s", SDL_GetError());
+        return false;
+    }
+
+    bounds->width = MAX(0, rect.w - DISPLAY_MARGINS);
+    bounds->height = MAX(0, rect.h - DISPLAY_MARGINS);
+    return true;
+}
+
+static bool
+is_optimal_size(struct sc_size current_size, struct sc_size content_size) {
+    // The size is optimal if we can recompute one dimension of the current
+    // size from the other
+    return current_size.height == current_size.width * content_size.height
+                                                     / content_size.width
+        || current_size.width == current_size.height * content_size.width
+                                                     / content_size.height;
+}
+
+// return the optimal size of the window, with the following constraints:
+//  - it attempts to keep at least one dimension of the current_size (i.e. it
+//    crops the black borders)
+//  - it keeps the aspect ratio
+//  - it scales down to make it fit in the display_size
+static struct sc_size
+get_optimal_size(struct sc_size current_size, struct sc_size content_size,
+                 bool within_display_bounds) {
+    if (content_size.width == 0 || content_size.height == 0) {
+        // avoid division by 0
+        return current_size;
+    }
+
+    struct sc_size window_size;
+
+    struct sc_size display_size;
+    if (!within_display_bounds ||
+            !get_preferred_display_bounds(&display_size)) {
+        // do not constraint the size
+        window_size = current_size;
+    } else {
+        window_size.width = MIN(current_size.width, display_size.width);
+        window_size.height = MIN(current_size.height, display_size.height);
+    }
+
+    if (is_optimal_size(window_size, content_size)) {
+        return window_size;
+    }
+
+    bool keep_width = content_size.width * window_size.height
+                    > content_size.height * window_size.width;
+    if (keep_width) {
+        // remove black borders on top and bottom
+        window_size.height = content_size.height * window_size.width
+                           / content_size.width;
+    } else {
+        // remove black borders on left and right (or none at all if it already
+        // fits)
+        window_size.width = content_size.width * window_size.height
+                          / content_size.height;
+    }
+
+    return window_size;
+}
+
+// initially, there is no current size, so use the frame size as current size
+// req_width and req_height, if not 0, are the sizes requested by the user
+static inline struct sc_size
+get_initial_optimal_size(struct sc_size content_size, uint16_t req_width,
+                         uint16_t req_height) {
+    struct sc_size window_size;
+    if (!req_width && !req_height) {
+        window_size = get_optimal_size(content_size, content_size, true);
+    } else {
+        if (req_width) {
+            window_size.width = req_width;
+        } else {
+            // compute from the requested height
+            window_size.width = (uint32_t) req_height * content_size.width
+                              / content_size.height;
+        }
+        if (req_height) {
+            window_size.height = req_height;
+        } else {
+            // compute from the requested width
+            window_size.height = (uint32_t) req_width * content_size.height
+                               / content_size.width;
+        }
+    }
+    return window_size;
+}
+
+static inline bool
+sc_screen_is_relative_mode(struct sc_screen *screen) {
+    // screen->im.mp may be NULL if --no-control
+    return screen->im.mp && screen->im.mp->relative_mode;
+}
+
+static void
+compute_content_rect(struct sc_size render_size, struct sc_size content_size,
+                     bool can_upscale, enum sc_render_fit render_fit,
+                     SDL_FRect *rect) {
+    if (render_fit == SC_RENDER_FIT_DISABLED) {
+        rect->x = 0;
+        rect->y = 0;
+        rect->w = content_size.width;
+        rect->h = content_size.height;
+        return;
+    }
+
+    if (is_optimal_size(render_size, content_size)) {
+        rect->x = 0;
+        rect->y = 0;
+        rect->w = render_size.width;
+        rect->h = render_size.height;
+        return;
+    }
+
+    if (!can_upscale && content_size.width <= render_size.width
+                     && content_size.height <= render_size.height) {
+        // Center without upscaling
+        rect->x = (render_size.width - content_size.width) / 2.f;
+        rect->y = (render_size.height - content_size.height) / 2.f;
+        rect->w = content_size.width;
+        rect->h = content_size.height;
+        return;
+    }
+
+    bool keep_width = content_size.width * render_size.height
+                    > content_size.height * render_size.width;
+    if (keep_width) {
+        rect->x = 0;
+        rect->w = render_size.width;
+        rect->h = (float) render_size.width * content_size.height
+                                            / content_size.width;
+        rect->y = (render_size.height - rect->h) / 2.f;
+    } else {
+        rect->y = 0;
+        rect->h = render_size.height;
+        rect->w = (float) render_size.height * content_size.width
+                                             / content_size.height;
+        rect->x = (render_size.width - rect->w) / 2.f;
+    }
+}
+
+static void
+sc_screen_update_content_rect(struct sc_screen *screen) {
+    // Only upscale video frames, not icon
+    bool can_upscale = screen->video && !screen->disconnected;
+
+    struct sc_size render_size =
+        sc_sdl_get_render_output_size(screen->renderer);
+
+    if (screen->flex_display && screen->transient_stretch) {
+        sc_tick now = sc_tick_now();
+        bool recent_resize_event = screen->last_resize_event_tick
+                && now - screen->last_resize_event_tick
+                        < FLEX_DISPLAY_STRETCH_EVENT_DELAY;
+
+        int dw = (int) screen->last_requested_display_size.width
+               - (int) screen->frame_size.width;
+        int dh = (int) screen->last_requested_display_size.height
+               - (int) screen->frame_size.height;
+        int abs_dw = dw >= 0 ? dw : -dw;
+        int abs_dh = dh >= 0 ? dh : -dh;
+        bool waiting_resize_apply =
+            screen->last_requested_display_size.width
+            && screen->last_requested_display_size.height
+            && screen->frame_size.width
+            && screen->frame_size.height
+            && (abs_dw > FLEX_DISPLAY_SIZE_MATCH_TOLERANCE
+                || abs_dh > FLEX_DISPLAY_SIZE_MATCH_TOLERANCE);
+        bool pending_timeout_not_reached = screen->last_resize_request_tick
+                && now - screen->last_resize_request_tick
+                        < FLEX_DISPLAY_STRETCH_PENDING_MAX;
+
+        if (recent_resize_event
+                || (waiting_resize_apply && pending_timeout_not_reached)) {
+            screen->rect.x = 0;
+            screen->rect.y = 0;
+            screen->rect.w = render_size.width;
+            screen->rect.h = render_size.height;
+            return;
+        }
+
+        // The resize event and catch-up window have both elapsed: restore the
+        // regular fit mode.
+        screen->transient_stretch = false;
+    }
+
+    if (screen->flex_display
+            && screen->video
+            && !screen->disconnected
+            && screen->render_fit != SC_RENDER_FIT_DISABLED) {
+        // In flex-display mode, the host window is the source of truth.
+        // Once the remote display catches up, continue filling the window
+        // instead of falling back to aspect-preserving letterboxing.
+        screen->rect.x = 0;
+        screen->rect.y = 0;
+        screen->rect.w = render_size.width;
+        screen->rect.h = render_size.height;
+        return;
+    }
+
+    compute_content_rect(render_size, screen->content_size, can_upscale,
+                         screen->render_fit, &screen->rect);
+}
+
+static void
+sc_screen_maybe_request_display_resize(struct sc_screen *screen);
+
+static bool
+sc_screen_render_texture(struct sc_screen *screen, const SDL_FRect *geometry) {
+    SDL_Renderer *renderer = screen->renderer;
+    SDL_Texture *texture = screen->tex.texture;
+    enum sc_orientation orientation = screen->orientation;
+
+    if (orientation == SC_ORIENTATION_0) {
+        return SDL_RenderTexture(renderer, texture, NULL, geometry);
+    }
+
+    unsigned cw_rotation = sc_orientation_get_rotation(orientation);
+    double angle = 90 * cw_rotation;
+
+    const SDL_FRect *dstrect = NULL;
+    SDL_FRect rect;
+    if (sc_orientation_is_swap(orientation)) {
+        rect.x = geometry->x + (geometry->w - geometry->h) / 2.f;
+        rect.y = geometry->y + (geometry->h - geometry->w) / 2.f;
+        rect.w = geometry->h;
+        rect.h = geometry->w;
+        dstrect = &rect;
+    } else {
+        dstrect = geometry;
+    }
+
+    SDL_FlipMode flip = sc_orientation_is_mirror(orientation)
+                      ? SDL_FLIP_HORIZONTAL : 0;
+
+    return SDL_RenderTextureRotated(renderer, texture, NULL, dstrect, angle,
+                                    NULL, flip);
+}
+
+static bool
+sc_screen_render_blurred_stretch(struct sc_screen *screen,
+                                 const SDL_FRect *geometry) {
+    bool ok = sc_screen_render_texture(screen, geometry);
+
+    SDL_Texture *texture = screen->tex.texture;
+    SDL_BlendMode previous_blend_mode = SDL_BLENDMODE_BLEND;
+    bool got_blend_mode = SDL_GetTextureBlendMode(texture,
+                                                  &previous_blend_mode);
+    Uint8 previous_alpha = 255;
+    bool got_alpha = SDL_GetTextureAlphaMod(texture, &previous_alpha);
+
+    if (!SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND)
+            || !SDL_SetTextureAlphaMod(texture, FLEX_DISPLAY_BLUR_ALPHA)) {
+        return ok;
+    }
+
+    static const int offsets[][2] = {
+        // ring 1
+        {-1, -1},
+        { 0, -1},
+        { 1, -1},
+        {-1,  0},
+        { 1,  0},
+        {-1,  1},
+        { 0,  1},
+        { 1,  1},
+        // ring 2
+        {-2, -2},
+        { 0, -2},
+        { 2, -2},
+        {-2,  0},
+        { 2,  0},
+        {-2,  2},
+        { 0,  2},
+        { 2,  2},
+        // ring 3 (cross + near-diagonals)
+        {-3,  0},
+        { 3,  0},
+        { 0, -3},
+        { 0,  3},
+        {-3, -1},
+        {-3,  1},
+        { 3, -1},
+        { 3,  1},
+        {-1, -3},
+        { 1, -3},
+        {-1,  3},
+        { 1,  3},
+    };
+
+    for (size_t i = 0; i < ARRAY_LEN(offsets); ++i) {
+        SDL_FRect rect = *geometry;
+        rect.x += offsets[i][0] * FLEX_DISPLAY_BLUR_OFFSET;
+        rect.y += offsets[i][1] * FLEX_DISPLAY_BLUR_OFFSET;
+        ok &= sc_screen_render_texture(screen, &rect);
+    }
+
+    if (got_alpha) {
+        SDL_SetTextureAlphaMod(texture, previous_alpha);
+    } else {
+        SDL_SetTextureAlphaMod(texture, 255);
+    }
+    if (got_blend_mode) {
+        SDL_SetTextureBlendMode(texture, previous_blend_mode);
+    } else {
+        SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_NONE);
+    }
+
+    return ok;
+}
+
+static void
+sc_screen_render_window_border(struct sc_screen *screen) {
+    const int border_thickness = 2;
+
+    uint64_t flags = SDL_GetWindowFlags(screen->window);
+    bool borderless = flags & SDL_WINDOW_BORDERLESS;
+    bool fullscreen = flags & SDL_WINDOW_FULLSCREEN;
+    if (!borderless || fullscreen) {
+        return;
+    }
+
+    struct sc_size render_size =
+        sc_sdl_get_render_output_size(screen->renderer);
+    if (render_size.width < 2 * border_thickness
+            || render_size.height < 2 * border_thickness) {
+        return;
+    }
+
+    SDL_SetRenderDrawColor(screen->renderer, 0x40, 0x40, 0x40, 0xff);
+    for (int i = 0; i < border_thickness; ++i) {
+        SDL_FRect rect = {
+            .x = i + 0.5f,
+            .y = i + 0.5f,
+            .w = render_size.width - (2 * i + 1.f),
+            .h = render_size.height - (2 * i + 1.f),
+        };
+        SDL_RenderRect(screen->renderer, &rect);
+    }
+}
+
+// render the texture to the renderer
+//
+// Set the update_content_rect flag if the window or content size may have
+// changed, so that the content rectangle is recomputed
+static void
+sc_screen_render(struct sc_screen *screen, bool update_content_rect) {
+    assert(screen->window_shown);
+
+    if (update_content_rect || screen->transient_stretch) {
+        sc_screen_update_content_rect(screen);
+    }
+
+    SDL_Renderer *renderer = screen->renderer;
+    SDL_SetRenderDrawColor(renderer, 0, 0, 0, 0);
+    sc_sdl_render_clear(renderer);
+
+    bool ok = false;
+    SDL_Texture *texture = screen->tex.texture;
+    if (!texture) {
+        // Draw a dark 10x10 square in the top-right corner to distinguish a
+        // black frame from the absence of a frame
+        struct sc_size render_size = sc_sdl_get_render_output_size(renderer);
+        SDL_SetRenderDrawColor(renderer, 0, 0, 0x33, 0xff);
+        SDL_FRect rect = {
+            .x = render_size.width - 20,
+            .y = 10,
+            .w = 10,
+            .h = 10,
+        };
+        SDL_RenderFillRect(renderer, &rect);
+        goto end;
+    }
+
+    SDL_FRect *geometry = &screen->rect;
+    if (screen->flex_display && screen->transient_stretch) {
+        ok = sc_screen_render_blurred_stretch(screen, geometry);
+    } else {
+        ok = sc_screen_render_texture(screen, geometry);
+    }
+
+    if (!ok) {
+        LOGE("Could not render texture: %s", SDL_GetError());
+    }
+
+end:
+    sc_screen_render_window_border(screen);
+    sc_sdl_render_present(renderer);
+    if (screen->window_shown) {
+        // Safety net for compositors/backends that miss resize events.
+        sc_screen_maybe_request_display_resize(screen);
+    }
+}
+
+static void
+sc_screen_maybe_request_display_resize(struct sc_screen *screen) {
+    if (!screen->flex_display || screen->disconnected) {
+        return;
+    }
+
+    assert(!screen->camera);
+    // Use window logical size (not drawable pixel size). On HiDPI backends,
+    // using pixel size would overshoot the requested Android display size by
+    // the content scale factor and may exceed encoder/device capabilities.
+    struct sc_size window_size = sc_sdl_get_window_size(screen->window);
+    assert(!(window_size.width & !0xFFFF));
+    assert(!(window_size.height & !0xFFFF));
+
+    uint16_t width = window_size.width;
+    uint16_t height = window_size.height;
+    if (sc_orientation_is_swap(screen->orientation)) {
+        uint16_t tmp = width;
+        width = height;
+        height = tmp;
+    }
+
+    // Keep client and server normalization consistent.
+    width &= ~7;
+    height &= ~7;
+    if (!width || !height) {
+        return;
+    }
+
+    if (screen->last_requested_display_size.width == width
+            && screen->last_requested_display_size.height == height) {
+        return;
+    }
+
+    sc_tick now = sc_tick_now();
+    if (screen->last_resize_request_tick
+            && now - screen->last_resize_request_tick
+                    < FLEX_DISPLAY_RESIZE_MIN_INTERVAL) {
+        return;
+    }
+
+    screen->last_requested_display_size.width = width;
+    screen->last_requested_display_size.height = height;
+    screen->last_resize_request_tick = now;
+
+    LOGV("resize_display(%" PRIu16 ", %" PRIu16 ")", width, height);
+    sc_controller_resize_display(screen->controller, width, height);
+}
+
+static void
+sc_screen_on_resize(struct sc_screen *screen) {
+    // This event can be triggered before the window is shown
+    if (screen->window_shown) {
+        if (screen->flex_display) {
+            screen->transient_stretch = true;
+            screen->last_resize_event_tick = sc_tick_now();
+        }
+        sc_screen_render(screen, true);
+        sc_screen_maybe_request_display_resize(screen);
+    }
+}
+
+#if defined(__APPLE__) || defined(_WIN32)
+# define CONTINUOUS_RESIZING_WORKAROUND
+#endif
+
+#ifdef CONTINUOUS_RESIZING_WORKAROUND
+// On Windows and MacOS, resizing blocks the event loop, so resizing events are
+// not triggered. As a workaround, handle them in an event handler.
+//
+// <https://bugzilla.libsdl.org/show_bug.cgi?id=2077>
+// <https://stackoverflow.com/a/40693139/1987178>
+static bool
+event_watcher(void *data, SDL_Event *event) {
+    struct sc_screen *screen = data;
+    assert(screen->video);
+
+    if (event->type == SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED
+            || event->type == SDL_EVENT_WINDOW_RESIZED) {
+        // In practice, it seems to always be called from the same thread in
+        // that specific case. Anyway, it's just a workaround.
+        sc_screen_on_resize(screen);
+    }
+
+    return true;
+}
+#endif
+
+static bool
+sc_screen_frame_sink_open(struct sc_frame_sink *sink,
+                          const AVCodecContext *ctx,
+                          const struct sc_stream_session *session) {
+    assert(ctx->pix_fmt == AV_PIX_FMT_YUV420P);
+
+    struct sc_screen *screen = DOWNCAST(sink);
+
+    if (ctx->width <= 0 || ctx->width > 0xFFFF
+            || ctx->height <= 0 || ctx->height > 0xFFFF) {
+        LOGE("Invalid video size: %dx%d", ctx->width, ctx->height);
+        return false;
+    }
+
+    // content_size can be written from this thread, because it is never read
+    // from the main thread before handling SC_EVENT_OPEN_WINDOW (which acts as
+    // a synchronization point) when video is enabled
+    screen->frame_size.width = session->video.width;
+    screen->frame_size.height = session->video.height;
+    screen->content_size = get_oriented_size(screen->frame_size,
+                                             screen->orientation);
+
+    screen->current_session = *session;
+
+    bool ok = sc_push_event(SC_EVENT_OPEN_WINDOW);
+    if (!ok) {
+        return false;
+    }
+
+#ifndef NDEBUG
+    screen->open = true;
+#endif
+
+    // nothing to do, the screen is already open on the main thread
+    return true;
+}
+
+static void
+sc_screen_frame_sink_close(struct sc_frame_sink *sink) {
+    struct sc_screen *screen = DOWNCAST(sink);
+    (void) screen;
+#ifndef NDEBUG
+    screen->open = false;
+#endif
+
+    // nothing to do, the screen lifecycle is not managed by the frame producer
+}
+
+static bool
+sc_screen_frame_sink_push(struct sc_frame_sink *sink, const AVFrame *frame) {
+    struct sc_screen *screen = DOWNCAST(sink);
+    assert(screen->video);
+
+    sc_mutex_lock(&screen->mutex);
+    bool previous_skipped = sc_frame_buffer_has_frame(&screen->fb);
+    bool ok = sc_frame_buffer_push(&screen->fb, frame);
+    screen->prevent_auto_resize = screen->current_session.video.client_resized;
+    sc_mutex_unlock(&screen->mutex);
+    if (!ok) {
+        return false;
+    }
+
+    if (previous_skipped) {
+        sc_fps_counter_add_skipped_frame(&screen->fps_counter);
+        // The SC_EVENT_NEW_FRAME triggered for the previous frame will consume
+        // this new frame instead
+    } else {
+        // Post the event on the UI thread
+        bool ok = sc_push_event(SC_EVENT_NEW_FRAME);
+        if (!ok) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+static bool
+sc_screen_frame_sink_push_session(struct sc_frame_sink *sink,
+                                  const struct sc_stream_session *session) {
+    struct sc_screen *screen = DOWNCAST(sink);
+    screen->current_session = *session;
+    return true;
+}
+
+bool
+sc_screen_init(struct sc_screen *screen,
+               const struct sc_screen_params *params) {
+    screen->controller = params->controller;
+
+    screen->resize_pending = false;
+    screen->window_shown = false;
+    screen->paused = false;
+    screen->resume_frame = NULL;
+    screen->orientation = SC_ORIENTATION_0;
+    screen->disconnected = false;
+    screen->disconnect_started = false;
+
+    screen->video = params->video;
+    screen->camera = params->camera;
+    screen->window_aspect_ratio_lock = params->window_aspect_ratio_lock;
+    screen->render_fit = params->render_fit;
+    screen->flex_display = params->flex_display;
+    screen->last_requested_display_size.width = 0;
+    screen->last_requested_display_size.height = 0;
+    screen->last_resize_request_tick = 0;
+    screen->transient_stretch = false;
+    screen->last_resize_event_tick = 0;
+    screen->hotspot_button_down = false;
+    screen->hotspot_press_started_in_hotspot = false;
+    screen->hotspot_dragged = false;
+    screen->hotspot_press_tick = 0;
+    screen->hotspot_drag_pending = false;
+    screen->maximized_hotspot_press_pending = false;
+    screen->maximized_hotspot_press_tick = 0;
+    screen->maximized_hotspot_press_x = 0.f;
+    screen->maximized_hotspot_press_y = 0.f;
+
+    screen->req.x = params->window_x;
+    screen->req.y = params->window_y;
+    screen->req.width = params->window_width;
+    screen->req.height = params->window_height;
+    screen->req.fullscreen = params->fullscreen;
+    screen->req.start_fps_counter = params->start_fps_counter;
+
+    screen->prevent_auto_resize = false;
+
+    bool ok = sc_mutex_init(&screen->mutex);
+    if (!ok) {
+        return false;
+    }
+
+    ok = sc_frame_buffer_init(&screen->fb);
+    if (!ok) {
+        goto error_destroy_mutex;
+    }
+
+    if (!sc_fps_counter_init(&screen->fps_counter)) {
+        goto error_destroy_frame_buffer;
+    }
+
+    if (screen->video) {
+        screen->orientation = params->orientation;
+        if (screen->orientation != SC_ORIENTATION_0) {
+            LOGI("Initial display orientation set to %s",
+                 sc_orientation_get_name(screen->orientation));
+        }
+    }
+
+    // Always create the window hidden to prevent blinking during initialization
+    uint32_t window_flags = SDL_WINDOW_HIGH_PIXEL_DENSITY | SDL_WINDOW_HIDDEN;
+    if (params->always_on_top) {
+        window_flags |= SDL_WINDOW_ALWAYS_ON_TOP;
+    }
+    if (params->window_borderless) {
+        window_flags |= SDL_WINDOW_BORDERLESS;
+    }
+    if (params->video) {
+        // The window will be shown on first frame
+        window_flags |= SDL_WINDOW_RESIZABLE;
+    }
+
+    const char *title = params->window_title;
+    assert(title);
+
+    int x = SDL_WINDOWPOS_UNDEFINED;
+    int y = SDL_WINDOWPOS_UNDEFINED;
+    int width = 256;
+    int height = 256;
+    if (params->window_x != SC_WINDOW_POSITION_UNDEFINED) {
+        x = params->window_x;
+    }
+    if (params->window_y != SC_WINDOW_POSITION_UNDEFINED) {
+        y = params->window_y;
+    }
+    if (params->window_width) {
+        width = params->window_width;
+    }
+    if (params->window_height) {
+        height = params->window_height;
+    }
+
+    // The window will be positioned and sized on first video frame
+    screen->window =
+        sc_sdl_create_window(title, x, y, width, height, window_flags);
+    if (!screen->window) {
+        LOGE("Could not create window: %s", SDL_GetError());
+        goto error_destroy_fps_counter;
+    }
+
+    if (!SDL_SetWindowMinimumSize(screen->window, SC_WINDOW_MIN_WIDTH,
+                                  SC_WINDOW_MIN_HEIGHT)) {
+        LOGW("Could not set window minimum size: %s", SDL_GetError());
+    }
+
+    if (!SDL_SetWindowHitTest(screen->window, sc_screen_window_hit_test,
+                              screen)) {
+        LOGW("Could not set window hit-test callback: %s", SDL_GetError());
+    }
+
+    screen->renderer = SDL_CreateRenderer(screen->window, NULL);
+    if (!screen->renderer) {
+        LOGE("Could not create renderer: %s", SDL_GetError());
+        goto error_destroy_window;
+    }
+
+#ifdef SC_DISPLAY_FORCE_OPENGL_CORE_PROFILE
+    screen->gl_context = NULL;
+
+    // starts with "opengl"
+    const char *renderer_name = SDL_GetRendererName(screen->renderer);
+    bool use_opengl = renderer_name && !strncmp(renderer_name, "opengl", 6);
+    if (use_opengl) {
+        // Persuade macOS to give us something better than OpenGL 2.1.
+        // If we create a Core Profile context, we get the best OpenGL version.
+        bool ok = SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK,
+                                      SDL_GL_CONTEXT_PROFILE_CORE);
+        if (!ok) {
+            LOGW("Could not set a GL Core Profile Context");
+        }
+
+        LOGD("Creating OpenGL Core Profile context");
+        screen->gl_context = SDL_GL_CreateContext(screen->window);
+        if (!screen->gl_context) {
+            LOGE("Could not create OpenGL context: %s", SDL_GetError());
+            goto error_destroy_renderer;
+        }
+    }
+#endif
+
+    bool mipmaps = params->video;
+    ok = sc_texture_init(&screen->tex, screen->renderer, mipmaps);
+    if (!ok) {
+        goto error_destroy_renderer;
+    }
+
+    ok = SDL_StartTextInput(screen->window);
+    if (!ok) {
+        LOGE("Could not enable text input: %s", SDL_GetError());
+        goto error_destroy_texture;
+    }
+
+    SDL_Surface *icon = sc_icon_load(SC_ICON_FILENAME_SCRCPY);
+    if (icon) {
+        if (!SDL_SetWindowIcon(screen->window, icon)) {
+            LOGW("Could not set window icon: %s", SDL_GetError());
+        }
+
+        if (!params->video) {
+            screen->content_size.width = icon->w;
+            screen->content_size.height = icon->h;
+            ok = sc_texture_set_from_surface(&screen->tex, icon);
+            if (!ok) {
+                LOGE("Could not set icon: %s", SDL_GetError());
+            }
+        }
+
+        sc_icon_destroy(icon);
+    } else {
+        // not fatal
+        LOGE("Could not load icon");
+
+        if (!params->video) {
+            // Make sure the content size is initialized
+            screen->content_size.width = 256;
+            screen->content_size.height = 256;
+        }
+    }
+
+    screen->frame = av_frame_alloc();
+    if (!screen->frame) {
+        LOG_OOM();
+        goto error_destroy_texture;
+    }
+
+    struct sc_input_manager_params im_params = {
+        .controller = params->controller,
+        .fp = params->fp,
+        .screen = screen,
+        .kp = params->kp,
+        .mp = params->mp,
+        .gp = params->gp,
+        .camera = params->camera,
+        .mouse_bindings = params->mouse_bindings,
+        .legacy_paste = params->legacy_paste,
+        .clipboard_autosync = params->clipboard_autosync,
+        .shortcut_mods = params->shortcut_mods,
+    };
+
+    sc_input_manager_init(&screen->im, &im_params);
+
+    // Initialize even if not used for simplicity
+    sc_mouse_capture_init(&screen->mc, screen->window, params->shortcut_mods);
+
+#ifdef CONTINUOUS_RESIZING_WORKAROUND
+    if (screen->video) {
+        ok = SDL_AddEventWatch(event_watcher, screen);
+        if (!ok) {
+            LOGW("Could not add event watcher for continuous resizing: %s",
+                 SDL_GetError());
+        }
+    }
+#endif
+
+    memset(&screen->current_session, 0, sizeof(screen->current_session));
+
+    static const struct sc_frame_sink_ops ops = {
+        .open = sc_screen_frame_sink_open,
+        .close = sc_screen_frame_sink_close,
+        .push = sc_screen_frame_sink_push,
+        .push_session = sc_screen_frame_sink_push_session,
+    };
+
+    screen->frame_sink.ops = &ops;
+
+#ifndef NDEBUG
+    screen->open = false;
+#endif
+
+    if (!screen->video) {
+        // Show the window immediately
+        screen->window_shown = true;
+        sc_sdl_show_window(screen->window);
+
+        if (sc_screen_is_relative_mode(screen)) {
+            // Capture mouse immediately if video mirroring is disabled
+            sc_mouse_capture_set_active(&screen->mc, true);
+        }
+    }
+
+    return true;
+
+error_destroy_texture:
+    sc_texture_destroy(&screen->tex);
+error_destroy_renderer:
+#ifdef SC_DISPLAY_FORCE_OPENGL_CORE_PROFILE
+    if (screen->gl_context) {
+        SDL_GL_DestroyContext(screen->gl_context);
+    }
+#endif
+    SDL_DestroyRenderer(screen->renderer);
+error_destroy_window:
+    SDL_DestroyWindow(screen->window);
+error_destroy_fps_counter:
+    sc_fps_counter_destroy(&screen->fps_counter);
+error_destroy_frame_buffer:
+    sc_frame_buffer_destroy(&screen->fb);
+error_destroy_mutex:
+    sc_mutex_destroy(&screen->mutex);
+
+    return false;
+}
+
+static void
+sc_screen_show_initial_window(struct sc_screen *screen) {
+    int x = screen->req.x != SC_WINDOW_POSITION_UNDEFINED
+          ? screen->req.x : (int) SDL_WINDOWPOS_CENTERED;
+    int y = screen->req.y != SC_WINDOW_POSITION_UNDEFINED
+          ? screen->req.y : (int) SDL_WINDOWPOS_CENTERED;
+    struct sc_point position = {
+        .x = x,
+        .y = y,
+    };
+
+    struct sc_size window_size =
+        get_initial_optimal_size(screen->content_size, screen->req.width,
+                                                       screen->req.height);
+
+    assert(is_windowed(screen));
+    set_aspect_ratio(screen, screen->content_size);
+    sc_sdl_set_window_size(screen->window, window_size);
+    sc_sdl_set_window_position(screen->window, position);
+
+    if (screen->req.fullscreen) {
+        sc_screen_toggle_fullscreen(screen);
+    }
+
+    if (screen->req.start_fps_counter) {
+        sc_fps_counter_start(&screen->fps_counter);
+    }
+
+    screen->window_shown = true;
+    sc_sdl_show_window(screen->window);
+    sc_screen_update_content_rect(screen);
+}
+
+void
+sc_screen_hide_window(struct sc_screen *screen) {
+    sc_sdl_hide_window(screen->window);
+    screen->window_shown = false;
+}
+
+void
+sc_screen_interrupt(struct sc_screen *screen) {
+    sc_fps_counter_interrupt(&screen->fps_counter);
+}
+
+static void
+sc_screen_interrupt_disconnect(struct sc_screen *screen) {
+    if (screen->disconnect_started) {
+        sc_disconnect_interrupt(&screen->disconnect);
+    }
+}
+
+void
+sc_screen_join(struct sc_screen *screen) {
+    sc_fps_counter_join(&screen->fps_counter);
+    if (screen->disconnect_started) {
+        sc_disconnect_join(&screen->disconnect);
+    }
+}
+
+void
+sc_screen_destroy(struct sc_screen *screen) {
+#ifndef NDEBUG
+    assert(!screen->open);
+#endif
+    if (screen->disconnect_started) {
+        sc_disconnect_destroy(&screen->disconnect);
+    }
+    sc_texture_destroy(&screen->tex);
+    av_frame_free(&screen->frame);
+#ifdef SC_DISPLAY_FORCE_OPENGL_CORE_PROFILE
+    SDL_GL_DestroyContext(screen->gl_context);
+#endif
+    SDL_DestroyRenderer(screen->renderer);
+    SDL_DestroyWindow(screen->window);
+    sc_fps_counter_destroy(&screen->fps_counter);
+    sc_frame_buffer_destroy(&screen->fb);
+    sc_mutex_destroy(&screen->mutex);
+
+    SDL_Event event;
+    int nevents = SDL_PeepEvents(&event, 1, SDL_GETEVENT,
+                                 SC_EVENT_DISCONNECTED_ICON_LOADED,
+                                 SC_EVENT_DISCONNECTED_ICON_LOADED);
+    if (nevents == 1) {
+        assert(event.type == SC_EVENT_DISCONNECTED_ICON_LOADED);
+        // The event was posted, but not handled, the icon must be freed
+        SDL_Surface *dangling_icon = event.user.data1;
+        sc_icon_destroy(dangling_icon);
+    }
+}
+
+static void
+resize_for_content(struct sc_screen *screen, struct sc_size old_content_size,
+                   struct sc_size new_content_size) {
+    assert(screen->video);
+
+    struct sc_size window_size = sc_sdl_get_window_size(screen->window);
+    struct sc_size target_size = new_content_size;
+    if (!screen->flex_display) {
+        // Scale proportionally
+        target_size.width = (uint32_t) window_size.width * target_size.width
+                          / old_content_size.width;
+        target_size.height = (uint32_t) window_size.height * target_size.height
+                           / old_content_size.height;
+    };
+    target_size = get_optimal_size(target_size, new_content_size, true);
+    assert(is_windowed(screen));
+    set_aspect_ratio(screen, new_content_size);
+    sc_sdl_set_window_size(screen->window, target_size);
+}
+
+static void
+set_content_size(struct sc_screen *screen, struct sc_size new_content_size,
+                 bool resize) {
+    assert(screen->video);
+
+    // In flex-display mode, the host window size is the source of truth:
+    // never resize the host window in response to frame/session size changes.
+    if (resize && !screen->flex_display) {
+        if (is_windowed(screen)) {
+            resize_for_content(screen, screen->content_size, new_content_size);
+        } else if (!screen->resize_pending) {
+            // Store the windowed size to be able to compute the optimal size
+            // once fullscreen/maximized/minimized are disabled
+            screen->windowed_content_size = screen->content_size;
+            screen->resize_pending = true;
+        }
+    }
+
+    screen->content_size = new_content_size;
+}
+
+static void
+apply_pending_resize(struct sc_screen *screen) {
+    assert(screen->video);
+
+    if (screen->flex_display) {
+        screen->resize_pending = false;
+        return;
+    }
+
+    assert(is_windowed(screen));
+    if (screen->resize_pending) {
+        resize_for_content(screen, screen->windowed_content_size,
+                                   screen->content_size);
+        screen->resize_pending = false;
+    }
+}
+
+void
+sc_screen_set_orientation(struct sc_screen *screen,
+                          enum sc_orientation orientation) {
+    assert(screen->video);
+
+    if (orientation == screen->orientation) {
+        return;
+    }
+
+    struct sc_size new_content_size =
+        get_oriented_size(screen->frame_size, orientation);
+
+    set_content_size(screen, new_content_size, true);
+
+    screen->orientation = orientation;
+    LOGI("Display orientation set to %s", sc_orientation_get_name(orientation));
+
+    sc_screen_render(screen, true);
+}
+
+static bool
+sc_screen_apply_frame(struct sc_screen *screen, bool can_resize) {
+    assert(screen->video);
+    assert(screen->window_shown);
+
+    sc_fps_counter_add_rendered_frame(&screen->fps_counter);
+
+    AVFrame *frame = screen->frame;
+    struct sc_size new_frame_size = {frame->width, frame->height};
+
+    if (screen->frame_size.width != new_frame_size.width
+            || screen->frame_size.height != new_frame_size.height) {
+
+        // frame dimension changed
+        screen->frame_size = new_frame_size;
+
+        struct sc_size new_content_size =
+            get_oriented_size(new_frame_size, screen->orientation);
+        set_content_size(screen, new_content_size, can_resize);
+        sc_screen_update_content_rect(screen);
+    }
+
+    bool ok = sc_texture_set_from_frame(&screen->tex, frame);
+    if (!ok) {
+        return false;
+    }
+
+    sc_screen_render(screen, false);
+    return true;
+}
+
+static bool
+sc_screen_update_frame(struct sc_screen *screen) {
+    assert(screen->video);
+
+    if (screen->paused) {
+        if (!screen->resume_frame) {
+            screen->resume_frame = av_frame_alloc();
+            if (!screen->resume_frame) {
+                LOG_OOM();
+                return false;
+            }
+        } else {
+            av_frame_unref(screen->resume_frame);
+        }
+        sc_mutex_lock(&screen->mutex);
+        sc_frame_buffer_consume(&screen->fb, screen->resume_frame);
+        sc_mutex_unlock(&screen->mutex);
+        return true;
+    }
+
+    av_frame_unref(screen->frame);
+    sc_mutex_lock(&screen->mutex);
+    sc_frame_buffer_consume(&screen->fb, screen->frame);
+    // read with lock held
+    bool can_resize = !screen->prevent_auto_resize;
+    sc_mutex_unlock(&screen->mutex);
+    return sc_screen_apply_frame(screen, can_resize);
+}
+
+void
+sc_screen_set_paused(struct sc_screen *screen, bool paused) {
+    assert(screen->video);
+
+    if (!paused && !screen->paused) {
+        // nothing to do
+        return;
+    }
+
+    if (screen->paused && screen->resume_frame) {
+        // If display screen was paused, refresh the frame immediately, even if
+        // the new state is also paused.
+        av_frame_free(&screen->frame);
+        screen->frame = screen->resume_frame;
+        screen->resume_frame = NULL;
+        bool ok = sc_screen_apply_frame(screen, true);
+        if (!ok) {
+            LOGE("Resume frame update failed");
+        }
+    }
+
+    if (!paused) {
+        LOGI("Display screen unpaused");
+    } else if (!screen->paused) {
+        LOGI("Display screen paused");
+    } else {
+        LOGI("Display screen re-paused");
+    }
+
+    screen->paused = paused;
+}
+
+void
+sc_screen_toggle_fullscreen(struct sc_screen *screen) {
+    assert(screen->video);
+
+    bool req_fullscreen =
+        !(SDL_GetWindowFlags(screen->window) & SDL_WINDOW_FULLSCREEN);
+
+    bool ok = SDL_SetWindowFullscreen(screen->window, req_fullscreen);
+    if (!ok) {
+        LOGW("Could not switch fullscreen mode: %s", SDL_GetError());
+        return;
+    }
+
+    LOGD("Requested %s mode", req_fullscreen ? "fullscreen" : "windowed");
+}
+
+void
+sc_screen_toggle_window_bordered(struct sc_screen *screen) {
+    bool bordered = SDL_GetWindowFlags(screen->window) & SDL_WINDOW_BORDERLESS;
+    struct sc_size window_size = sc_sdl_get_window_size(screen->window);
+    struct sc_point window_position = sc_sdl_get_window_position(screen->window);
+    int old_top = 0;
+    int old_left = 0;
+    int old_bottom = 0;
+    int old_right = 0;
+    bool have_old_borders = SDL_GetWindowBordersSize(screen->window, &old_top,
+                                                     &old_left, &old_bottom,
+                                                     &old_right);
+
+    bool ok = SDL_SetWindowBordered(screen->window, bordered);
+    if (!ok) {
+        LOGW("Could not toggle window decorations: %s", SDL_GetError());
+        return;
+    }
+
+    // Best effort: keep client area size and anchor when decorations
+    // appear/disappear. Some compositors may ignore explicit positioning.
+    sc_sdl_set_window_size(screen->window, window_size);
+
+    int new_top = 0;
+    int new_left = 0;
+    int new_bottom = 0;
+    int new_right = 0;
+    bool have_new_borders = SDL_GetWindowBordersSize(screen->window, &new_top,
+                                                     &new_left, &new_bottom,
+                                                     &new_right);
+    if (have_old_borders && have_new_borders) {
+        struct sc_point new_position = {
+            .x = window_position.x + old_left - new_left,
+            .y = window_position.y + old_top - new_top,
+        };
+        sc_sdl_set_window_position(screen->window, new_position);
+    }
+
+    LOGD("Requested %s window decorations", bordered ? "enabled" : "disabled");
+}
+
+void
+sc_screen_resize_to_fit(struct sc_screen *screen) {
+    assert(screen->video);
+
+    if (!is_windowed(screen)) {
+        return;
+    }
+
+    struct sc_point point = sc_sdl_get_window_position(screen->window);
+    struct sc_size window_size = sc_sdl_get_window_size(screen->window);
+
+    struct sc_size optimal_size =
+        get_optimal_size(window_size, screen->content_size, false);
+
+    // Center the window related to the device screen
+    assert(optimal_size.width <= window_size.width);
+    assert(optimal_size.height <= window_size.height);
+
+    struct sc_point new_position = {
+        .x = point.x + (window_size.width - optimal_size.width) / 2,
+        .y = point.y + (window_size.height - optimal_size.height) / 2,
+    };
+
+    set_aspect_ratio(screen, screen->content_size);
+    sc_sdl_set_window_size(screen->window, optimal_size);
+    sc_sdl_set_window_position(screen->window, new_position);
+    LOGD("Resized to optimal size: %ux%u", optimal_size.width,
+                                           optimal_size.height);
+}
+
+void
+sc_screen_resize_to_pixel_perfect(struct sc_screen *screen) {
+    assert(screen->video);
+
+    if (!is_windowed(screen)) {
+        return;
+    }
+
+    struct sc_size content_size = screen->content_size;
+    set_aspect_ratio(screen, content_size);
+    sc_sdl_set_window_size(screen->window, content_size);
+    LOGD("Resized to pixel-perfect: %ux%u", content_size.width,
+                                            content_size.height);
+}
+
+static void
+sc_disconnect_on_icon_loaded(struct sc_disconnect *d, SDL_Surface *icon,
+                             void *userdata) {
+    (void) d;
+    (void) userdata;
+
+    bool ok = sc_push_event_with_data(SC_EVENT_DISCONNECTED_ICON_LOADED, icon);
+    if (!ok) {
+        sc_icon_destroy(icon);
+    }
+}
+
+static void
+sc_disconnect_on_timeout(struct sc_disconnect *d, void *userdata) {
+    (void) d;
+    (void) userdata;
+
+    bool ok = sc_push_event(SC_EVENT_DISCONNECTED_TIMEOUT);
+    (void) ok; // ignore failure
+}
+
+void
+sc_screen_handle_event(struct sc_screen *screen, const SDL_Event *event) {
+    sc_screen_poll_hotspot_state(screen);
+
+    if (screen->hotspot_drag_pending) {
+        screen->hotspot_drag_pending = false;
+    }
+
+    switch (event->type) {
+        case SC_EVENT_OPEN_WINDOW:
+            sc_screen_show_initial_window(screen);
+
+            if (sc_screen_is_relative_mode(screen)) {
+                // Capture mouse on start
+                sc_mouse_capture_set_active(&screen->mc, true);
+            }
+
+            sc_screen_render(screen, false);
+            return;
+        case SC_EVENT_NEW_FRAME: {
+            bool ok = sc_screen_update_frame(screen);
+            if (!ok) {
+                LOGE("Frame update failed\n");
+            }
+            return;
+        }
+        case SDL_EVENT_WINDOW_EXPOSED:
+            sc_screen_render(screen, true);
+            return;
+        case SDL_EVENT_MOUSE_MOTION:
+            if (screen->video && screen->maximized_hotspot_press_pending) {
+                float dx = event->motion.x - screen->maximized_hotspot_press_x;
+                float dy = event->motion.y - screen->maximized_hotspot_press_y;
+                if (dx < 0) {
+                    dx = -dx;
+                }
+                if (dy < 0) {
+                    dy = -dy;
+                }
+                if (dx > SC_WINDOW_HOTSPOT_CLICK_MOVE_THRESHOLD
+                        || dy > SC_WINDOW_HOTSPOT_CLICK_MOVE_THRESHOLD) {
+                    screen->maximized_hotspot_press_pending = false;
+                }
+            }
+            break;
+        case SDL_EVENT_MOUSE_BUTTON_DOWN:
+            if (screen->video && event->button.button == SDL_BUTTON_LEFT) {
+                uint64_t flags = SDL_GetWindowFlags(screen->window);
+                bool maximized = flags & SDL_WINDOW_MAXIMIZED;
+                if (maximized
+                        && sc_screen_is_drag_hotspot(event->button.x,
+                                                     event->button.y)) {
+                    screen->maximized_hotspot_press_pending = true;
+                    screen->maximized_hotspot_press_tick = sc_tick_now();
+                    screen->maximized_hotspot_press_x = event->button.x;
+                    screen->maximized_hotspot_press_y = event->button.y;
+                    // Do not inject the synthetic titlebar click to Android.
+                    return;
+                }
+                screen->maximized_hotspot_press_pending = false;
+            }
+            break;
+        case SDL_EVENT_MOUSE_BUTTON_UP:
+            if (screen->video && event->button.button == SDL_BUTTON_LEFT
+                    && screen->maximized_hotspot_press_pending) {
+                screen->maximized_hotspot_press_pending = false;
+                sc_tick elapsed = sc_tick_now()
+                        - screen->maximized_hotspot_press_tick;
+                if (elapsed <= SC_WINDOW_DRAG_HOLD_THRESHOLD) {
+                    if (!SDL_RestoreWindow(screen->window)) {
+                        LOGW("Could not restore window: %s", SDL_GetError());
+                    }
+                }
+                // Do not inject the synthetic titlebar click to Android.
+                return;
+            }
+            break;
+// If defined, then the actions are already performed by the event watcher
+#ifndef CONTINUOUS_RESIZING_WORKAROUND
+        case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
+        case SDL_EVENT_WINDOW_RESIZED:
+            sc_screen_on_resize(screen);
+            return;
+#endif
+        case SDL_EVENT_WINDOW_RESTORED:
+            if (screen->video && is_windowed(screen)) {
+                apply_pending_resize(screen);
+                sc_screen_render(screen, true);
+            }
+            return;
+        case SDL_EVENT_WINDOW_ENTER_FULLSCREEN:
+            LOGD("Switched to fullscreen mode");
+            assert(screen->video);
+            return;
+        case SDL_EVENT_WINDOW_LEAVE_FULLSCREEN:
+            LOGD("Switched to windowed mode");
+            assert(screen->video);
+            if (is_windowed(screen)) {
+                apply_pending_resize(screen);
+                sc_screen_render(screen, true);
+            }
+            return;
+        case SC_EVENT_DEVICE_DISCONNECTED:
+            assert(!screen->disconnected);
+            screen->disconnected = true;
+            if (!screen->window_shown) {
+                // No window open
+                return;
+            }
+
+            sc_input_manager_handle_event(&screen->im, event);
+
+            sc_texture_reset(&screen->tex);
+            sc_screen_render(screen, true);
+
+            sc_tick deadline = sc_tick_now() + SC_TICK_FROM_SEC(2);
+            static const struct sc_disconnect_callbacks cbs = {
+                .on_icon_loaded = sc_disconnect_on_icon_loaded,
+                .on_timeout = sc_disconnect_on_timeout,
+            };
+            bool ok =
+                sc_disconnect_start(&screen->disconnect, deadline, &cbs, NULL);
+            if (ok) {
+                screen->disconnect_started = true;
+            }
+
+            return;
+    }
+
+    if (sc_screen_is_relative_mode(screen)
+            && sc_mouse_capture_handle_event(&screen->mc, event)) {
+        // The mouse capture handler consumed the event
+        return;
+    }
+
+    sc_input_manager_handle_event(&screen->im, event);
+}
+
+void
+sc_screen_handle_disconnection(struct sc_screen *screen) {
+    if (!screen->window_shown) {
+        // No window open, quit immediately
+        return;
+    }
+
+    if (!screen->disconnect_started) {
+        // If sc_disconnect_start() failed, quit immediately
+        return;
+    }
+
+    SDL_Event event;
+    while (SDL_WaitEvent(&event)) {
+        switch (event.type) {
+            case SDL_EVENT_WINDOW_EXPOSED:
+                sc_screen_render(screen, true);
+                break;
+            case SC_EVENT_DISCONNECTED_ICON_LOADED: {
+                SDL_Surface *icon_disconnected = event.user.data1;
+                assert(icon_disconnected);
+
+                bool ok = sc_texture_set_from_surface(&screen->tex,
+                                                      icon_disconnected);
+                if (ok) {
+                    screen->content_size.width = icon_disconnected->w;
+                    screen->content_size.height = icon_disconnected->h;
+                    sc_screen_render(screen, true);
+                } else {
+                    // not fatal
+                    LOGE("Could not set disconnected icon");
+                }
+
+                sc_icon_destroy(icon_disconnected);
+                break;
+            }
+            case SC_EVENT_DISCONNECTED_TIMEOUT:
+                LOGD("Closing after device disconnection");
+                return;
+            case SDL_EVENT_QUIT:
+                LOGD("User requested to quit");
+                sc_screen_interrupt_disconnect(screen);
+                return;
+            default:
+                sc_input_manager_handle_event(&screen->im, &event);
+        }
+    }
+}
+
+struct sc_point
+sc_screen_convert_drawable_to_frame_coords(struct sc_screen *screen,
+                                           int32_t x, int32_t y) {
+    assert(screen->video);
+
+    enum sc_orientation orientation = screen->orientation;
+
+    int32_t w = screen->content_size.width;
+    int32_t h = screen->content_size.height;
+
+    // screen->rect must be initialized to avoid a division by zero
+    assert(screen->rect.w && screen->rect.h);
+
+    x = (int64_t) (x - screen->rect.x) * w / screen->rect.w;
+    y = (int64_t) (y - screen->rect.y) * h / screen->rect.h;
+
+    struct sc_point result;
+    switch (orientation) {
+        case SC_ORIENTATION_0:
+            result.x = x;
+            result.y = y;
+            break;
+        case SC_ORIENTATION_90:
+            result.x = y;
+            result.y = w - x;
+            break;
+        case SC_ORIENTATION_180:
+            result.x = w - x;
+            result.y = h - y;
+            break;
+        case SC_ORIENTATION_270:
+            result.x = h - y;
+            result.y = x;
+            break;
+        case SC_ORIENTATION_FLIP_0:
+            result.x = w - x;
+            result.y = y;
+            break;
+        case SC_ORIENTATION_FLIP_90:
+            result.x = h - y;
+            result.y = w - x;
+            break;
+        case SC_ORIENTATION_FLIP_180:
+            result.x = x;
+            result.y = h - y;
+            break;
+        default:
+            assert(orientation == SC_ORIENTATION_FLIP_270);
+            result.x = y;
+            result.y = x;
+            break;
+    }
+
+    return result;
+}
+
+struct sc_point
+sc_screen_convert_window_to_frame_coords(struct sc_screen *screen,
+                                         int32_t x, int32_t y) {
+    sc_screen_hidpi_scale_coords(screen, &x, &y);
+    return sc_screen_convert_drawable_to_frame_coords(screen, x, y);
+}
+
+void
+sc_screen_hidpi_scale_coords(struct sc_screen *screen, int32_t *x, int32_t *y) {
+    // take the HiDPI scaling (dw/ww and dh/wh) into account
+
+    struct sc_size window_size = sc_sdl_get_window_size(screen->window);
+    int64_t ww = window_size.width;
+    int64_t wh = window_size.height;
+
+    struct sc_size drawable_size =
+        sc_sdl_get_window_size_in_pixels(screen->window);
+    int64_t dw = drawable_size.width;
+    int64_t dh = drawable_size.height;
+
+    // scale for HiDPI (64 bits for intermediate multiplications)
+    *x = (int64_t) *x * dw / ww;
+    *y = (int64_t) *y * dh / wh;
+}

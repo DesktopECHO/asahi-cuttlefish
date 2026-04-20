@@ -75,6 +75,7 @@ SYSPROP_WEAK int __system_property_set(const char* key, const char* value) {
   if (!read_only && strlen(value) >= PROP_VALUE_MAX) return -1;
 
   std::lock_guard lock(g_properties_lock);
+  android::base::ScopedLockAssertion lock_assertion(g_properties_lock);
   auto [it, success] = g_properties.emplace(key, value);
   if (read_only) return success ? 0 : -1;
   if (!success) {
@@ -86,6 +87,7 @@ SYSPROP_WEAK int __system_property_set(const char* key, const char* value) {
 
 SYSPROP_WEAK int __system_property_get(const char* key, char* value) {
   std::lock_guard lock(g_properties_lock);
+  android::base::ScopedLockAssertion lock_assertion(g_properties_lock);
   auto it = g_properties.find(key);
   if (it == g_properties.end()) {
     *value = '\0';
@@ -97,6 +99,7 @@ SYSPROP_WEAK int __system_property_get(const char* key, char* value) {
 
 SYSPROP_WEAK const prop_info* __system_property_find(const char* key) {
   std::lock_guard lock(g_properties_lock);
+  android::base::ScopedLockAssertion lock_assertion(g_properties_lock);
   auto it = g_properties.find(key);
   if (it == g_properties.end()) {
     return nullptr;

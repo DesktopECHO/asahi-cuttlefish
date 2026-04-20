@@ -12,5 +12,7 @@
 # - changes to `stable_status.txt` values triggers a re-run of the affected
 #   actions
 
-echo "STABLE_HEAD_COMMIT $(git rev-parse HEAD)"
-echo "STABLE_CF_COMMON_VERSION $(dpkg-parsechangelog --file ../debian/changelog --show-field Version)"
+version_file="$(dirname "$0")/../packaging/VERSION"
+
+echo "STABLE_HEAD_COMMIT $(git rev-parse HEAD 2>/dev/null || echo unknown)"
+echo "STABLE_CF_COMMON_VERSION $(tr -d '\n' < "$version_file")"

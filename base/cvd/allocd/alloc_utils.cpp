@@ -20,6 +20,7 @@
 #include <fstream>
 #include <string_view>
 #include <sstream>
+#include <vector>
 
 #include "absl/log/log.h"
 #include "absl/strings/str_cat.h"
@@ -37,6 +38,65 @@
 #include <net/if.h>
 
 namespace cuttlefish {
+namespace {
+
+// Read upstream DNS servers from the host. Prefers
+// /run/systemd/resolve/resolv.conf (real upstreams written by systemd-resolved)
+// over /etc/resolv.conf, which typically resolves to a loopback stub address
+// (127.0.0.53) unreachable from the VM guest. Falls back to Google DNS.
+void GetHostDnsServers(std::string& ipv4_servers, std::string& ipv6_servers) {
+  static constexpr std::string_view kFallbackV4 = "8.8.8.8,8.8.4.4";
+  static constexpr std::string_view kFallbackV6 =
+      "2001:4860:4860::8888,2001:4860:4860::8844";
+  static constexpr const char* kCandidates[] = {
+      "/run/systemd/resolve/resolv.conf",
+      "/etc/resolv.conf",
+  };
+
+  std::vector<std::string> v4, v6;
+  for (const char* path : kCandidates) {
+    std::ifstream f(path);
+    if (!f.is_open()) {
+      continue;
+    }
+    std::string line;
+    while (std::getline(f, line)) {
+      if (line.rfind("nameserver ", 0) != 0) {
+        continue;
+      }
+      std::string addr = line.substr(11);
+      // Skip loopback addresses (stub resolvers like 127.0.0.53)
+      if (addr.rfind("127.", 0) == 0 || addr == "::1") {
+        continue;
+      }
+      (addr.find(':') != std::string::npos ? v6 : v4).push_back(addr);
+    }
+    if (!v4.empty() || !v6.empty()) {
+      break;
+    }
+  }
+
+  auto join_at_least_two = [](std::vector<std::string>& servers,
+                               std::string_view fallback) -> std::string {
+    if (servers.empty()) {
+      return std::string(fallback);
+    }
+    if (servers.size() == 1) {
+      servers.push_back(servers[0]);
+    }
+    std::ostringstream ss;
+    for (size_t i = 0; i < servers.size(); ++i) {
+      if (i) ss << ',';
+      ss << servers[i];
+    }
+    return ss.str();
+  };
+
+  ipv4_servers = join_at_least_two(v4, kFallbackV4);
+  ipv6_servers = join_at_least_two(v6, kFallbackV6);
+}
+
+}  // namespace
 
 bool CreateEthernetIface(std::string_view name, std::string_view bridge_name) {
   // assume bridge exists
@@ -211,6 +271,11 @@ bool SetupBridgeGateway(std::string_view bridge_name,
 
   config.has_dnsmasq = true;
 
+  // On Fedora/RHEL, firewalld blocks DHCP (UDP port 67) on bridge interfaces
+  // unless the interface is in the trusted zone.
+  FirewallAddTrustedInterface(bridge_name);
+  config.has_firewall = true;
+
   auto ret = IptableConfig(network, true).ok();
   if (!ret) {
     CleanupBridgeGateway(bridge_name, ipaddr, config);
@@ -231,6 +296,10 @@ void CleanupBridgeGateway(std::string_view name, std::string_view ipaddr,
     IptableConfig(network, false);
   }
 
+  if (config.has_firewall) {
+    FirewallRemoveTrustedInterface(name);
+  }
+
   if (config.has_dnsmasq) {
     StopDnsmasq(name);
   }
@@ -242,8 +311,8 @@ void CleanupBridgeGateway(std::string_view name, std::string_view ipaddr,
 
 bool StartDnsmasq(std::string_view bridge_name, std::string_view gateway,
                   std::string_view dhcp_range) {
-  auto dns_servers = "8.8.8.8,8.8.4.4";
-  auto dns6_servers = "2001:4860:4860::8888,2001:4860:4860::8844";
+  std::string dns_servers, dns6_servers;
+  GetHostDnsServers(dns_servers, dns6_servers);
 
   return Execute(
              {"dnsmasq", "--port=0", "--strict-order", "--except-interface=lo",
@@ -262,13 +331,15 @@ bool StartDnsmasq(std::string_view bridge_name, std::string_view gateway,
 
 bool StopDnsmasq(std::string_view name) {
   std::ifstream file;
-  std::string filename = absl::StrFormat(
-      "/var/run/cuttlefish-dnsmasq-%s.pid", name);
+  std::string filename =
+      absl::StrFormat("%s/cuttlefish-dnsmasq-%s.pid", CvdDir(), name);
+  std::string lease_filename =
+      absl::StrFormat("%s/cuttlefish-dnsmasq-%s.leases", CvdDir(), name);
   LOG(INFO) << "stopping dnsmasq for interface: " << name;
   file.open(filename);
-  if (file.is_open()) {
+  if (!file.is_open()) {
     LOG(INFO) << "dnsmasq file:" << filename
-              << " could not be opened, assume dnsmaq has already stopped";
+              << " could not be opened, assume dnsmasq has already stopped";
     return true;
   }
 
@@ -280,6 +351,8 @@ bool StopDnsmasq(std::string_view name) {
   bool ret = Execute({"kill", pid}) == 0;
   if (ret) {
     LOG(INFO) << "dnsmasq for:" << name << "successfully stopped";
+    std::remove(filename.c_str());
+    std::remove(lease_filename.c_str());
   } else {
     LOG(WARNING) << "Failed to stop dnsmasq for:" << name;
   }
@@ -290,11 +363,18 @@ bool CreateEthernetBridgeIface(std::string_view name,
                                std::string_view ipaddr) {
   auto exists = BridgeExists(name);
   if (exists.ok() && *exists) {
-    LOG(INFO) << "Bridge " << name << " exists already, doing nothing.";
-    return true;
+    LOG(INFO) << "Bridge " << name
+              << " exists already, ensuring it is administratively up.";
+    FirewallAddTrustedInterface(name);
+    return BringUpIface(name).ok();
   }
 
   if (!CreateBridge(name).ok()) {
+    return false;
+  }
+
+  if (!BringUpIface(name).ok()) {
+    DestroyBridge(name);
     return false;
   }
 
@@ -308,7 +388,7 @@ bool CreateEthernetBridgeIface(std::string_view name,
 
 bool DestroyEthernetBridgeIface(std::string_view name,
                                 std::string_view ipaddr) {
-  GatewayConfig config{true, true, true};
+  GatewayConfig config{true, true, true, true};
 
   // Don't need to check if removing some part of the config failed, we need to
   // remove the entire interface, so just ignore any error until the end

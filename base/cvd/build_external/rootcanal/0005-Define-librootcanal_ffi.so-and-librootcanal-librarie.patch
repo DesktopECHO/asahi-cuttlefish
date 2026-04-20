@@ -8,19 +8,18 @@ librootcanal_ffi.so becomes a cc_library instead of cc_binary.
 Expose librootcanal, which is like rootcanal but excluding the main
 file.
 
-This ensured that we can have cc_binary depending on it.
-
-Bug: b/402294843
+This ensures that other targets can depend on the reusable rootcanal
+implementation directly.
 ---
  BUILD | 34 +++++++++++++++++++++++++++++-----
  1 file changed, 29 insertions(+), 5 deletions(-)
 
 diff --git a/BUILD b/BUILD
-index 2c2f1d6..fc26477 100644
+index 5113e18..89af574 100644
 --- a/BUILD
 +++ b/BUILD
-@@ -107,9 +107,8 @@ rust_static_library(
-     ],
+@@ -32,9 +32,8 @@ cc_proto_library(
+     deps = [":rootcanal_proto"],
  )
  
 -cc_binary(
@@ -30,7 +29,7 @@ index 2c2f1d6..fc26477 100644
      srcs = [
          "include/crypto/crypto.h",
          "include/hci/address.h",
-@@ -161,6 +160,7 @@ cc_binary(
+@@ -91,6 +90,7 @@ cc_binary(
          "include",
          "rust/include",
      ],
@@ -38,7 +37,7 @@ index 2c2f1d6..fc26477 100644
      visibility = ["//visibility:public"],
      deps = [
          ":rootcanal_config",
-@@ -173,10 +173,9 @@ cc_binary(
+@@ -103,10 +103,9 @@ cc_binary(
      ],
  )
  
@@ -51,10 +50,11 @@ index 2c2f1d6..fc26477 100644
          "desktop/test_environment.cc",
          "desktop/test_environment.h",
          "include/crypto/crypto.h",
-@@ -286,3 +285,28 @@ cc_binary(
+@@ -220,3 +219,29 @@ cc_binary(
      # breaks the device registration
      # features = ["-thin_lto"],
  )
++
 +
 +cc_binary(
 +    name = "rootcanal",
@@ -82,4 +82,3 @@ index 2c2f1d6..fc26477 100644
 +)
 -- 
 2.51.0.rc1.167.g924127e9c0-goog
-

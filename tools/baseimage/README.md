@@ -3,6 +3,7 @@
 ## Setup
 
 ```
+cd tools/baseimage
 gcloud auth application-default login
 ```
 
@@ -13,7 +14,9 @@ Go to Step 2 if you have already an image with the wanted kernel.
 ```
 go run ./cmd/create_gce_fixed_kernel \
   -project <project> \
-  -linux-image-deb linux-image-6.1.0-40-cloud-amd64 \
+  -source-image-project fedora-cloud \
+  -source-image <fedora_cloud_image_name> \
+  -kernel-package kernel-<version> \
   -image-name <fixed_kernel_image_name>
 ```
 
@@ -29,7 +32,9 @@ go run ./cmd/create_gce_base_image \
   -image-name <base_image_name>
 ```
 
-## Step 3. Create image with cuttlefish debian packages installed.
+## Step 3. Create image with cuttlefish RPM packages installed.
+
+Run these `go run ./cmd/...` commands from the `tools/baseimage` directory.
 
 ```
 go run ./cmd/gce_install_cuttlefish_packages \
@@ -37,9 +42,9 @@ go run ./cmd/gce_install_cuttlefish_packages \
   -source-image-project <project> \
   -source-image <base_image_name> \
   -image-name <output_image_name> \
-  -deb <path/to/cuttlefish-base-deb> \
-  -deb <path/to/cuttlefish-user-deb> \
-  -deb <path/to/cuttlefish-orchestration-deb>
+  -rpm <path/to/cuttlefish-base-rpm> \
+  -rpm <path/to/cuttlefish-user-rpm> \
+  -rpm <path/to/cuttlefish-orchestration-rpm>
 ```
 
 ## Step 4. Validate output image

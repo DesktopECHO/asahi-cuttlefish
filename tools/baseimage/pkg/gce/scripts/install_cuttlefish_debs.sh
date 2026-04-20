@@ -17,20 +17,12 @@
 set -o errexit -o nounset -o pipefail
 
 if [[ $# -eq 0 ]] ; then
-  echo "usage: $0 /path/to/deb1 /path/to/deb2 /path/to/deb3"
+  echo "usage: $0 /path/to/rpm1 /path/to/rpm2 /path/to/rpm3"
   exit 1
 fi
 
-arch=$(uname -m)
-[ "${arch}" = "x86_64" ] && arch=amd64
-[ "${arch}" = "aarch64" ] && arch=arm64
-
-kmodver_begin=$(sudo chroot /mnt/image/ /usr/bin/dpkg -s linux-image-cloud-${arch} | grep ^Depends: | \
-  cut -d: -f2 | cut -d" " -f2 | sed 's/linux-image-//')
-echo "IMAGE STARTS WITH KERNEL: ${kmodver_begin}"
-
-sudo chroot /mnt/image /usr/bin/apt update
-sudo chroot /mnt/image /usr/bin/apt upgrade -y
+kernel_begin=$(sudo chroot /mnt/image /usr/bin/rpm -q kernel-core --qf '%{VERSION}-%{RELEASE}.%{ARCH}\n' | tail -1)
+echo "IMAGE STARTS WITH KERNEL: ${kernel_begin}"
 
 rm -rf /mnt/image/tmp/install
 mkdir /mnt/image/tmp/install
@@ -41,16 +33,15 @@ do
   echo "Installing: ${src}"
   name=$(basename "${src}")
   cp "${src}" "/mnt/image/tmp/install/${name}"
-  sudo chroot /mnt/image /usr/bin/apt install -y "/tmp/install/${name}"
+  sudo chroot /mnt/image /usr/bin/dnf install -y "/tmp/install/${name}"
 done
 
-kmodver_end=$(sudo chroot /mnt/image/ /usr/bin/dpkg -s linux-image-cloud-${arch} | grep ^Depends: | \
-  cut -d: -f2 | cut -d" " -f2 | sed 's/linux-image-//')
-echo "IMAGE ENDS WITH KERNEL: ${kmodver_end}"
+kernel_end=$(sudo chroot /mnt/image /usr/bin/rpm -q kernel-core --qf '%{VERSION}-%{RELEASE}.%{ARCH}\n' | tail -1)
+echo "IMAGE ENDS WITH KERNEL: ${kernel_end}"
 
-if [ "${kmodver_begin}" != "${kmodver_end}" ]; then
-  echo "KERNEL UPDATE DETECTED!!! ${kmodver_begin} -> ${kmodver_end}"
-  echo "Use source image with kernel ${kmodver_end} installed."
+if [ "${kernel_begin}" != "${kernel_end}" ]; then
+  echo "KERNEL UPDATE DETECTED!!! ${kernel_begin} -> ${kernel_end}"
+  echo "Use a source image with kernel ${kernel_end} installed."
   exit 1
 fi
 

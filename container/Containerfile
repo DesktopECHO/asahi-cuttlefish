@@ -5,7 +5,7 @@
 ARG BUILD_OPTION=prod
 
 
-FROM debian:12 AS runner-base
+FROM fedora:43 AS runner-base
 
 # Expose Operator Port (HTTP:1080, HTTPS:1443)
 EXPOSE 1080 1443
@@ -22,14 +22,15 @@ RUN touch /.dockerenv
 USER root
 WORKDIR /root
 RUN set -x
-RUN apt update
-RUN apt install -y --no-install-recommends \
+RUN dnf -y upgrade --refresh
+RUN dnf -y install \
     ca-certificates \
     curl \
-    mesa-utils \
+    mesa-dri-drivers \
     nginx \
-    sudo
-RUN update-ca-certificates
+    sudo \
+    systemd
+RUN update-ca-trust
 
 COPY ./container/guest/run_services.sh /root/
 RUN chmod +x /root/run_services.sh
@@ -37,22 +38,20 @@ RUN chmod +x /root/run_services.sh
 
 FROM runner-base AS runner-dev
 
-COPY cuttlefish-*.deb /root/debian/
-RUN apt install -y --no-install-recommends -f \
-    /root/debian/cuttlefish-base_*.deb \
-    /root/debian/cuttlefish-user_*.deb \
-    /root/debian/cuttlefish-orchestration_*.deb
+COPY cuttlefish-*.rpm /root/rpm/
+RUN dnf -y install \
+    /root/rpm/cuttlefish-base-*.rpm \
+    /root/rpm/cuttlefish-user-*.rpm \
+    /root/rpm/cuttlefish-orchestration-*.rpm
 
 
 FROM runner-base AS runner-prod
 
 ARG REPO
-RUN apt install -y --no-install-recommends gnupg
-RUN curl https://us-apt.pkg.dev/doc/repo-signing-key.gpg | apt-key add -
-RUN echo "deb https://us-apt.pkg.dev/projects/android-cuttlefish-artifacts $REPO main" \
-    | tee -a /etc/apt/sources.list.d/artifact-registry.list
-RUN apt update
-RUN apt install -y --no-install-recommends \
+RUN dnf -y install dnf-plugins-core
+RUN curl -fsSL https://us-yum.pkg.dev/doc/repo-signing-key.gpg -o /etc/pki/rpm-gpg/RPM-GPG-KEY-android-cuttlefish
+RUN printf '[android-cuttlefish]\nname=android-cuttlefish\nbaseurl=https://us-yum.pkg.dev/projects/android-cuttlefish-artifacts/%s\nenabled=1\ngpgcheck=1\ngpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-android-cuttlefish\n' "$REPO" > /etc/yum.repos.d/android-cuttlefish.repo
+RUN dnf -y install \
     cuttlefish-base \
     cuttlefish-user \
     cuttlefish-orchestration

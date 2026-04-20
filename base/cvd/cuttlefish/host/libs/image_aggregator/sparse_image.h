@@ -21,7 +21,8 @@
 
 namespace cuttlefish {
 
-Result<void> ForceRawImage(const std::string& image_path);
+Result<std::string> ForceRawImage(const std::string& image_path,
+                                  const std::string& output_directory);
 Result<bool> IsSparseImage(const std::string& image_path);
 
 /** Image file format comprised of a list of chunks of "raw data" and "fill

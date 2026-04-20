@@ -57,7 +57,58 @@ struct CommonState {
 
 bool IsLikelySoftwareRenderer(const std::string& renderer) {
   const std::string lower_renderer = absl::AsciiStrToLower(renderer);
-  return lower_renderer.find("llvmpipe") != std::string::npos;
+  return lower_renderer.find("llvmpipe") != std::string::npos ||
+         lower_renderer.find("swiftshader") != std::string::npos ||
+         lower_renderer.find("lavapipe") != std::string::npos;
+}
+
+bool HasHardwareBackedGles(
+    const gfxstream::proto::GraphicsAvailability& availability) {
+  if (!availability.has_egl()) {
+    return false;
+  }
+  if (availability.egl().has_gles3_availability() &&
+      !IsLikelySoftwareRenderer(availability.egl().gles3_availability()
+                                    .renderer())) {
+    return true;
+  }
+  if (availability.egl().has_gles2_availability() &&
+      !IsLikelySoftwareRenderer(availability.egl().gles2_availability()
+                                    .renderer())) {
+    return true;
+  }
+  return false;
+}
+
+bool HasHardwareBackedVulkan(
+    const gfxstream::proto::GraphicsAvailability& availability) {
+  if (!availability.has_vulkan()) {
+    return false;
+  }
+  for (const auto& physical_device : availability.vulkan().physical_devices()) {
+    if (!IsLikelySoftwareRenderer(physical_device.name())) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool IsAsahiMesaHost(const gfxstream::proto::GraphicsAvailability& availability) {
+  if (!availability.has_egl()) {
+    return false;
+  }
+  const std::string vendor = absl::AsciiStrToLower(availability.egl().vendor());
+  if (vendor.find("mesa") == std::string::npos) {
+    return false;
+  }
+  const auto has_apple_renderer = [](const auto& gles_availability) {
+    return absl::AsciiStrToLower(gles_availability.renderer()).find("apple") !=
+           std::string::npos;
+  };
+  return (availability.egl().has_gles3_availability() &&
+          has_apple_renderer(availability.egl().gles3_availability())) ||
+         (availability.egl().has_gles2_availability() &&
+          has_apple_renderer(availability.egl().gles2_availability()));
 }
 
 using MeetsRequirementFunc = std::function<bool(const CommonState& common)>;
@@ -68,15 +119,29 @@ struct RequirementWithReason {
   std::string_view failure_explanation;
 };
 
+struct RequirementCheckResults {
+  bool all_requirements_met = true;
+  std::vector<std::string_view> failed_requirements;
+};
+
+Result<RequirementCheckResults> CheckGpuModeRequirements(
+    const CommonState& common, GpuMode gpu_mode);
+
 const std::unordered_map<GpuMode, std::vector<RequirementWithReason>>&
 GetGpuModeRequirementsMap() {
   const RequirementWithReason kHostIsNonArm{
-      .func = [](const CommonState&) { return HostArch() != Arch::Arm64; },
-      .success_explanation = "The host is not ARM64.",
+      .func =
+          [](const CommonState& common) {
+            return HostArch() != Arch::Arm64 ||
+                   IsAsahiMesaHost(common.graphics_availability);
+          },
+      .success_explanation =
+          "The host is not ARM64 or is an explicitly allowed Asahi Mesa host.",
       .failure_explanation =
           "The host is ARM64. Not enabling accelerated modes on ARM64 until "
-          "vhost-user-gpu has been more thoroughly tested. Please explicitly "
-          "use --gpu_mode=gfxstream or --gpu_mode=gfxstream_guest_angle to "
+          "vhost-user-gpu has been more thoroughly tested, except for "
+          "hardware-backed Asahi Mesa hosts. Please explicitly use "
+          "--gpu_mode=gfxstream or --gpu_mode=gfxstream_guest_angle to "
           "enable for now.",
   };
   const RequirementWithReason kNotUsingHostQemu{
@@ -118,20 +183,7 @@ GetGpuModeRequirementsMap() {
   const RequirementWithReason kHostGlesIsNonSoftwareRenderer{
       .func =
           [](const CommonState& common) {
-            const auto& availability = common.graphics_availability;
-            if (availability.has_egl()) {
-              if (availability.egl().has_gles2_availability() &&
-                  IsLikelySoftwareRenderer(
-                      availability.egl().gles2_availability().renderer())) {
-                return false;
-              }
-              if (availability.egl().has_gles3_availability() &&
-                  IsLikelySoftwareRenderer(
-                      availability.egl().gles3_availability().renderer())) {
-                return false;
-              }
-            }
-            return true;
+            return HasHardwareBackedGles(common.graphics_availability);
           },
       .success_explanation =
           "The host GLES driver is not a software implementation.",
@@ -156,14 +208,7 @@ GetGpuModeRequirementsMap() {
   const RequirementWithReason kHostVulkanIsNonSoftwareRenderer{
       .func =
           [](const CommonState& common) {
-            const auto& availability = common.graphics_availability;
-            if (availability.has_vulkan() &&
-                !availability.vulkan().physical_devices().empty() &&
-                (availability.vulkan().physical_devices(0).type() !=
-                 ::gfxstream::proto::VulkanPhysicalDevice::TYPE_DISCRETE_GPU)) {
-              return false;
-            }
-            return true;
+            return HasHardwareBackedVulkan(common.graphics_availability);
           },
       .success_explanation =
           "The host Vulkan driver is not a software implementation.",
@@ -383,7 +428,9 @@ GetNeededVhostUserGpuHostRendererFeatures(
 }
 
 #ifndef __APPLE__
-std::vector<GpuMode> GetGpuModeCandidates(const GuestConfig& guest_config) {
+std::vector<GpuMode> GetGpuModeCandidates(
+    const GuestConfig& guest_config,
+    const gfxstream::proto::GraphicsAvailability& availability) {
   if (!guest_config.gpu_mode_candidates.empty()) {
     VLOG(0) << "GPU mode candidates provided by guest.";
     return guest_config.gpu_mode_candidates;
@@ -393,7 +440,12 @@ std::vector<GpuMode> GetGpuModeCandidates(const GuestConfig& guest_config) {
              "Assuming the historically accepted modes.";
 
   std::vector<GpuMode> gpu_mode_candidates;
-  if (guest_config.prefer_drm_virgl_when_supported) {
+  // Asahi currently exposes accelerated GLES, but the Vulkan-backed gfxstream
+  // path can still fail at runtime in the vhost-user GPU process. Prefer the
+  // GLES-only virgl path during auto selection so Apple Silicon hosts keep an
+  // accelerated configuration without relying on gfxstream Vulkan bring-up.
+  if (guest_config.prefer_drm_virgl_when_supported ||
+      (IsAsahiMesaHost(availability) && HasHardwareBackedGles(availability))) {
     gpu_mode_candidates.push_back(GpuMode::DrmVirgl);
   }
   gpu_mode_candidates.push_back(GpuMode::Gfxstream);
@@ -407,6 +459,13 @@ std::vector<GpuMode> GetGpuModeCandidates(const GuestConfig& guest_config) {
 
 Result<bool> GpuModeRequirementsMet(const CommonState& common,
                                     const GpuMode gpu_mode) {
+  const auto requirement_results =
+      CF_EXPECT(CheckGpuModeRequirements(common, gpu_mode));
+  return requirement_results.all_requirements_met;
+}
+
+Result<RequirementCheckResults> CheckGpuModeRequirements(
+    const CommonState& common, const GpuMode gpu_mode) {
   const auto& requirements_map = GetGpuModeRequirementsMap();
   const auto requirements_it = requirements_map.find(gpu_mode);
   CF_EXPECTF(requirements_it != requirements_map.end(),
@@ -414,7 +473,7 @@ Result<bool> GpuModeRequirementsMet(const CommonState& common,
   const auto& requirements = requirements_it->second;
 
   VLOG(0) << "Checking requirements for --gpu_mode=" << GpuModeString(gpu_mode);
-  bool all_requirements_met = true;
+  RequirementCheckResults results;
   for (size_t i = 0; i < requirements.size(); i++) {
     const RequirementWithReason& requirement = requirements[i];
     const bool meets_requirement = requirement.func(common);
@@ -422,9 +481,12 @@ Result<bool> GpuModeRequirementsMet(const CommonState& common,
             << (meets_requirement ? "PASSED: " : "FAILED: ")
             << (meets_requirement ? requirement.success_explanation
                                   : requirement.failure_explanation);
-    all_requirements_met &= meets_requirement;
+    results.all_requirements_met &= meets_requirement;
+    if (!meets_requirement) {
+      results.failed_requirements.push_back(requirement.failure_explanation);
+    }
   }
-  return all_requirements_met;
+  return results;
 }
 
 Result<std::vector<GpuMode>> GetSupportedGpuModeCandidates(
@@ -455,18 +517,24 @@ Result<GpuMode> SelectGpuMode(
   if (gpu_mode_arg != GpuMode::Auto) {
     // User explicitly supplied a mode. Double check the requirements but only
     // log warnings and respect their choice:
-    if (!CF_EXPECT(GpuModeRequirementsMet(common, gpu_mode_arg))) {
+    const auto requirement_results =
+        CF_EXPECT(CheckGpuModeRequirements(common, gpu_mode_arg));
+    if (!requirement_results.all_requirements_met) {
       LOG(ERROR)
           << "--gpu_mode=" << GpuModeString(gpu_mode_arg)
           << " was requested but the prerequisites were not detected "
              "so the device may not function correctly. Please consider "
              "switching to --gpu_mode=auto or --gpu_mode=guest_swiftshader.";
+      for (const std::string_view failed_requirement :
+           requirement_results.failed_requirements) {
+        LOG(ERROR) << "  unmet requirement: " << failed_requirement;
+      }
     }
     return gpu_mode_arg;
   }
 
   const std::vector<GpuMode> gpu_mode_candidates =
-      GetGpuModeCandidates(guest_config);
+      GetGpuModeCandidates(guest_config, graphics_availability);
   VLOG(0) << "Initial GPU mode candidates:";
   for (size_t i = 0; i < gpu_mode_candidates.size(); i++) {
     VLOG(0) << "  " << (i + 1) << ": " << GpuModeString(gpu_mode_candidates[i]);
@@ -622,13 +690,9 @@ Result<void> SetGfxstreamFlags(
     const GuestConfig& guest_config,
     const gfxstream::proto::GraphicsAvailability& availability,
     CuttlefishConfig::MutableInstanceSpecific& instance) {
-  std::string gfxstream_transport = kGfxstreamTransportAsg;
-
-  // Some older R branches are missing some Gfxstream backports
-  // which introduced a backward incompatible change (b/267483000).
-  if (guest_config.android_version_number == "11.0.0") {
-    gfxstream_transport = kGfxstreamTransportPipe;
-  }
+  // Prefer the legacy pipe transport universally for now. The newer ASG path
+  // still shows runtime regressions on multiple host GPU stacks.
+  std::string gfxstream_transport = kGfxstreamTransportPipe;
 
   if (IsAmdGpu(availability)) {
     // KVM does not support mapping host graphics buffers into the guest because

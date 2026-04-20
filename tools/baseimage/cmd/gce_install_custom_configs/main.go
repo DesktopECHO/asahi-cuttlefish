@@ -24,8 +24,8 @@ import (
 )
 
 const (
-	cuttlefishHODefaultsPath          = "/etc/default/cuttlefish-host_orchestrator"
-	cuttlefishIntegrationDefaultsPath = "/etc/defaults/cuttlefish-integration"
+	cuttlefishHODefaultsPath          = "/etc/sysconfig/cuttlefish-host_orchestrator"
+	cuttlefishIntegrationDefaultsPath = "/etc/sysconfig/cuttlefish-integration"
 )
 
 // Flags

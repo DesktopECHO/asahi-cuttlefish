@@ -90,21 +90,30 @@ Result<std::unordered_map<std::string, std::string>> ConsoleBootconfig(
 
 }  // namespace
 
-// Bootconfing args should be added to the launcher and no longer via the build system variable
-// `BOARD_BOOTCONFIG`. Allow legacy keys for backward compatibility.
+// Bootconfig args should be added to the launcher and no longer via the build
+// system variable `BOARD_BOOTCONFIG`. Allow legacy keys for backward
+// compatibility.
 Result<void> ValidateBoardBootconfigKeys(
     const cuttlefish::DeviceType type,
     const std::map<std::string, std::string, std::less<void>> args) {
-  std::vector<std::string> allowed_args(std::begin(kLegacyBoardBootconfigKeysShared), std::end(kLegacyBoardBootconfigKeysShared));
+  std::vector<std::string> allowed_args(
+      std::begin(kLegacyBoardBootconfigKeysShared),
+      std::end(kLegacyBoardBootconfigKeysShared));
   if (type == cuttlefish::DeviceType::Auto) {
-    allowed_args.insert(allowed_args.end(), std::begin(kLegacyBoardBootconfigKeysAuto), std::end(kLegacyBoardBootconfigKeysAuto));
+    allowed_args.insert(allowed_args.end(),
+                        std::begin(kLegacyBoardBootconfigKeysAuto),
+                        std::end(kLegacyBoardBootconfigKeysAuto));
   } else if (type == cuttlefish::DeviceType::Minidroid) {
-    allowed_args.insert(allowed_args.end(), std::begin(kLegacyBoardBootconfigKeysMinidroid), std::end(kLegacyBoardBootconfigKeysMinidroid));
+    allowed_args.insert(allowed_args.end(),
+                        std::begin(kLegacyBoardBootconfigKeysMinidroid),
+                        std::end(kLegacyBoardBootconfigKeysMinidroid));
   }
 
-  for(auto iter = args.begin(); iter != args.end(); iter++) {
+  for (auto iter = args.begin(); iter != args.end(); iter++) {
     CF_EXPECTF(Contains(allowed_args, iter->first),
-        "Error: detected new `BOARD_BOOTCONFIG` key: \"{}\"!!! Please add new bootconfig args to the `cvd` launcher.", iter->first);
+               "Error: detected new `BOARD_BOOTCONFIG` key: \"{}\"!!! Please "
+               "add new bootconfig args to the `cvd` launcher.",
+               iter->first);
   }
 
   return {};
@@ -271,7 +280,7 @@ Result<std::unordered_map<std::string, std::string>> BootconfigArgsFromConfig(
               ? "com.android.hardware.graphics.composer.drm_hwcomposer"
               : "com.android.hardware.graphics.composer.ranchu";
 
-  if (instance.vhal_proxy_server_port()) {
+  if (instance.enable_vhal_proxy_server()) {
     bootconfig_args["androidboot.vhal_proxy_server_port"] =
         std::to_string(instance.vhal_proxy_server_port());
     int32_t instance_id;

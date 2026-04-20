@@ -1,10 +1,27 @@
 #!/bin/sh
 
-IMG_ORIG="debian-13-generic-arm64.qcow2"
-uboot="/usr/lib/u-boot/qemu_arm64/u-boot.bin"
-edk2="/usr/share/qemu-efi-aarch64/QEMU_EFI.fd"
+find_uboot() {
+    for candidate in \
+        /usr/lib/u-boot/qemu_arm64/u-boot.bin \
+        /usr/share/uboot/qemu_arm64/u-boot.bin \
+        /usr/share/uboot/qemu-arm64/u-boot.bin; do
+        if [ -f "${candidate}" ]; then
+            echo "${candidate}"
+            return 0
+        fi
+    done
+    find /usr -type f \( -path '*/qemu_arm64/u-boot.bin' -o -path '*/qemu-arm64/u-boot.bin' \) 2>/dev/null | head -n 1
+}
+
+IMG_ORIG="${FEDORA_IMAGE:-Fedora-Cloud-Base-Generic-42-1.1.aarch64.qcow2}"
+uboot="$(find_uboot)"
 tmpflash="uboot_qemu_flash.img"
 CIDATA="gigabyte-cidata.iso"
+
+if [ -z "${uboot}" ]; then
+    echo "failed to find qemu arm64 u-boot image" >&2
+    exit 1
+fi
 
 # Make a copy if qcow2 file.
 IMG_NEW="$(basename -s .qcow2 ${IMG_ORIG})-instance-1.qcow2"

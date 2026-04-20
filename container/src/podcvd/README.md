@@ -9,37 +9,30 @@ interfere host environment of each other.
 
 ## User setup guide
 
-### podcvd
-
-<!-- TODO(seungjaeyoo): Modify repository after we have deb at stable/unstable -->
-Execute following commands to register apt repository containing
+Execute following commands to register the yum repository containing
 `cuttlefish-podcvd` package on your machine.
 ```
-sudo install -m 0755 -d /etc/apt/keyrings
-sudo curl -fsSL https://us-apt.pkg.dev/doc/repo-signing-key.gpg -o /etc/apt/keyrings/android-cuttlefish-artifacts.asc
-sudo chmod a+r /etc/apt/keyrings/android-cuttlefish-artifacts.asc
-echo \
-  "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/android-cuttlefish-artifacts.asc] \
-  https://us-apt.pkg.dev/projects/android-cuttlefish-artifacts android-cuttlefish-nightly main" | \
-  sudo tee /etc/apt/sources.list.d/android-cuttlefish-artifacts.list > /dev/null
-sudo apt update
+sudo curl -fsSL https://us-yum.pkg.dev/doc/repo-signing-key.gpg -o /etc/pki/rpm-gpg/RPM-GPG-KEY-android-cuttlefish
+sudo tee /etc/yum.repos.d/android-cuttlefish.repo > /dev/null <<'EOF'
+[android-cuttlefish]
+name=android-cuttlefish
+baseurl=https://us-yum.pkg.dev/projects/android-cuttlefish-artifacts/android-cuttlefish-nightly
+enabled=1
+gpgcheck=1
+gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-android-cuttlefish
+EOF
+sudo dnf makecache
 ```
 
 Execute following commands to install `cuttlefish-podcvd` and setup your
 machine.
 ```
-sudo apt install cuttlefish-podcvd
-/usr/lib/cuttlefish-podcvd/bin/cuttlefish-podcvd-prerequisites.sh
+sudo dnf install cuttlefish-podcvd
+/usr/lib/cuttlefish-common/bin/cuttlefish-podcvd-prerequisites.sh
 ```
 
 Now it's available to execute `podcvd help` or `podcvd create` as you could
 execute `cvd help` or `cvd create` after installing `cuttlefish-base`.
-
-### cuttlefish-mcp-server
-
-cuttlefish-mcp-server requires additional setup beyond podcvd.
-
-Execute `gemini extensions install /usr/lib/cuttlefish-podcvd/cuttlefish-mcp-server/`.
 
 ## Development guide
 
@@ -47,19 +40,10 @@ Execute `gemini extensions install /usr/lib/cuttlefish-podcvd/cuttlefish-mcp-ser
 
 Execute `go build ./cmd/podcvd` from `container/src/podcvd` directory.
 
-### Manually build cuttlefish-podcvd debian package
+### Manually build cuttlefish-podcvd RPM
 
 [tools/buildutils/cw/README.md#container](/tools/buildutils/cw/README.md#container)
-describes how to build `cuttlefish-podcvd` debian package.
+describes how to build `cuttlefish-podcvd` RPM.
 
-Execute `sudo apt install ./cuttlefish-podcvd_*.deb` to install it on your
+Execute `sudo dnf install ./cuttlefish-podcvd-*.rpm` to install it on your
 machine.
-
-### Manually build cuttlefish_mcp_server
-
-Execute `go build ./cmd/cuttlefish_mcp_server` from `container/src/podcvd`
-directory.
-
-### Test cuttlefish_mcp_server on your local machine
-
-Execute `gemini extensions install container/src/podcvd`.

@@ -89,7 +89,6 @@ start_dnsmasq() {
       --dhcp-leasefile=/var/run/cuttlefish-dnsmasq-"${1}".leases \
       --dhcp-no-override \
       ${ipv6_args}
-
 }
 
 # Stop DHCP server on an interface
@@ -97,6 +96,8 @@ start_dnsmasq() {
 stop_dnsmasq() {
     if [ -f /var/run/cuttlefish-dnsmasq-"${1}".pid ]; then
         kill $(cat /var/run/cuttlefish-dnsmasq-"${1}".pid)
+        rm -f /var/run/cuttlefish-dnsmasq-"${1}".pid
+        rm -f /var/run/cuttlefish-dnsmasq-"${1}".leases
     fi
 }
 
@@ -224,7 +225,7 @@ destroy_bridged_interfaces() {
         "${iptables}" -t nat -D POSTROUTING -s "${network}" -j MASQUERADE
         stop_dnsmasq "${2}"
         if [ -n "${ipv6_prefix}" -a -n "${ipv6_prefix_length}" ]; then
-            ip -6 addr del "${ipv6_prefix}1/${ipv6_prefix_len}" dev "${2}"
+            ip -6 addr del "${ipv6_prefix}1/${ipv6_prefix_length}" dev "${2}"
         fi
         ip addr del "${gateway}${netmask}" dev "${2}"
     fi

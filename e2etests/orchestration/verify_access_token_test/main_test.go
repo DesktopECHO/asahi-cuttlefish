@@ -31,7 +31,7 @@ import (
 const baseURL = "http://0.0.0.0:2080"
 
 // IMPORTANT!!! This test requires modifying the Host Orchestrator
-// Service default config at /etc/default/cuttlefish-host_orchestrator,
+// Service default config at /etc/sysconfig/cuttlefish-host_orchestrator,
 // having the following line
 //
 // ```
