@@ -3315,5 +3315,46 @@ cc_library(
         "@libvpx",
         "@libyuv",
         "@protobuf",
+    ] + select({
+        "@platforms//cpu:x86_32": [":libwebrtc_avx2"],
+        "@platforms//cpu:x86_64": [":libwebrtc_avx2"],
+        "//conditions:default": [],
+    }),
+)
+
+cc_library(
+    name = "libwebrtc_avx2",
+    srcs = [
+        "common_audio/fir_filter_avx2.cc",
+        "common_audio/resampler/sinc_resampler_avx2.cc",
+        "modules/audio_processing/aec3/adaptive_fir_filter_avx2.cc",
+        "modules/audio_processing/aec3/adaptive_fir_filter_erl_avx2.cc",
+        "modules/audio_processing/aec3/fft_data_avx2.cc",
+        "modules/audio_processing/aec3/matched_filter_avx2.cc",
+        "modules/audio_processing/aec3/vector_math_avx2.cc",
+        "modules/audio_processing/agc2/rnn_vad/vector_math_avx2.cc",
+    ],
+    copts = select({
+        "@platforms//cpu:x86_32": [
+            "-mavx2",
+            "-mfma",
+        ],
+        "@platforms//cpu:x86_64": [
+            "-mavx2",
+            "-mfma",
+        ],
+        "//conditions:default": [],
+    }),
+    includes = [
+        ".",
+        "webrtc",
+    ],
+    defines = [
+        "WEBRTC_APM_DEBUG_DUMP=0",
+    ],
+    deps = [
+        "@abseil-cpp//absl/functional:bind_front",
+        "@abseil-cpp//absl/strings:string_view",
+        "@abseil-cpp//absl/types:optional",
     ],
 )
