@@ -1,5 +1,5 @@
 Name:           ika-base
-Version:        1.50.0
+Version:        1.51.0
 Release:        4%{?dist}
 Summary:        Cuttlefish Android Virtual Device host packages for Fedora
 License:        Apache-2.0
@@ -23,6 +23,7 @@ BuildRequires:  libcurl-devel
 BuildRequires:  libavdevice-free-devel
 BuildRequires:  libcap-devel
 BuildRequires:  libdrm-devel
+BuildRequires:  libicu-devel
 BuildRequires:  libxcrypt-compat
 BuildRequires:  libuuid-devel
 BuildRequires:  libxml2-devel
@@ -39,6 +40,7 @@ BuildRequires:  python3
 BuildRequires:  systemd-rpm-macros
 BuildRequires:  mesa-libgbm-devel
 BuildRequires:  virglrenderer-devel
+BuildRequires:  vulkan-headers
 BuildRequires:  wayland-devel
 BuildRequires:  which
 BuildRequires:  xxd
@@ -56,6 +58,7 @@ Requires:       libX11
 Requires:       libXext
 Requires:       mesa-libgbm
 Requires:       mesa-libGL
+Requires:       mesa-vulkan-drivers
 Requires:       net-tools
 Requires:       NetworkManager
 Requires:       nftables
@@ -260,7 +263,6 @@ mkdir -p %{buildroot}/usr/lib/cuttlefish-common/lib64
 ln -sfn ../graphics_detector %{buildroot}/usr/lib/cuttlefish-common/bin/aarch64-linux-gnu/gfxstream_graphics_detector
 ln -sfn ../libvk_swiftshader.so %{buildroot}/usr/lib/cuttlefish-common/bin/aarch64-linux-gnu/libvk_swiftshader.so
 ln -sfn ../graphics_detector %{buildroot}/usr/lib/cuttlefish-common/bin/x86_64-linux-gnu/gfxstream_graphics_detector
-ln -sfn ../bin/libvk_lavapipe.so %{buildroot}/usr/lib/cuttlefish-common/lib64/vulkan.lvp.so
 ln -sfn ../bin/libvk_swiftshader.so %{buildroot}/usr/lib/cuttlefish-common/lib64/vulkan.pastel.so
 
 %post
@@ -376,5 +378,8 @@ systemctl daemon-reload >/dev/null 2>&1 || :
 /usr/lib/cuttlefish-metrics
 
 %changelog
+* Mon Apr 20 2026 Daniel Milisic <dmilisic@desktopecho.com> - 1.51.0-4
+- Rebase Fedora packaging onto android-cuttlefish 1.51.0
+
 * Sat Mar 28 2026 Daniel Milisic <dmilisic@desktopecho.com> - 1.50.0-1
 - Port host packaging and service assets to Fedora RPMs

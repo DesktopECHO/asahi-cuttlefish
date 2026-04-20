@@ -1,5 +1,5 @@
 Name:           ika-frontend
-Version:        1.50.0
+Version:        1.51.0
 Release:        4%{?dist}
 Summary:        Frontend and orchestration packages for Cuttlefish on Fedora
 License:        Apache-2.0
@@ -141,5 +141,8 @@ systemctl daemon-reload >/dev/null 2>&1 || :
 /usr/libexec/cuttlefish/cuttlefish-host_orchestrator-prepare
 
 %changelog
+* Mon Apr 20 2026 Daniel Milisic <dmilisic@desktopecho.com> - 1.51.0-4
+- Rebase Fedora packaging onto android-cuttlefish 1.51.0
+
 * Sat Mar 28 2026 Daniel Milisic <dmilisic@desktopecho.com> - 1.50.0-1
 - Port frontend packaging and services to Fedora RPMs
