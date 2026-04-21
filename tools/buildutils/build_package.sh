@@ -334,5 +334,6 @@ for arch_dir in "${RPMBUILD_TOPDIR}/RPMS"/*; do
   if [[ -d "$arch_dir" ]]; then
     mkdir -p "$arch_dir/debug"
     mv "$arch_dir"/*debuginfo*.rpm "$arch_dir/debug/" 2>/dev/null || true
+    mv "$arch_dir"/ika-orchestration*.rpm "$arch_dir"/ika-metrics*.rpm "$arch_dir/debug/" 2>/dev/null || true
   fi
 done
