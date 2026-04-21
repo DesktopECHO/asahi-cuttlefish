@@ -1,5 +1,5 @@
 Name:           ika-lineageos
-Version:        20260401
+Version:        20260420
 Release:        2
 Summary:        LineageOS for Cuttlefish host
 License:        Apache-2.0

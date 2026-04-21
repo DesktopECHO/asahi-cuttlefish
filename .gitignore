@@ -9,3 +9,4 @@ androguard.db-wal
 androguard.db-shm
 androguard.db
 /base/.bazel_output_gfxstream_latest
+cvd-phone-slim.tar

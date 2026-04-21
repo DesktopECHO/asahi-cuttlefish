@@ -328,3 +328,11 @@ for spec in "${specs[@]}"; do
     -bb "${spec}"
 done
 popd
+
+# Move *debuginfo* RPMs to debug subfolder after build
+for arch_dir in "${RPMBUILD_TOPDIR}/RPMS"/*; do
+  if [[ -d "$arch_dir" ]]; then
+    mkdir -p "$arch_dir/debug"
+    mv "$arch_dir"/*debuginfo*.rpm "$arch_dir/debug/" 2>/dev/null || true
+  fi
+done
