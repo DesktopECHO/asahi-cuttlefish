@@ -17,7 +17,6 @@ BuildRequires:  libavutil-free-devel
 BuildRequires:  libswresample-free-devel
 BuildRequires:  SDL3-devel
 BuildRequires:  libusb1-devel
-BuildRequires:  java-21-openjdk-devel
 
 Requires:       ika-base
 Requires:       libavcodec-free
