@@ -144,7 +144,7 @@ case "%{_arch}" in
 esac
 
 SOURCE_TARBALL="%{_sourcedir}/android-cuttlefish-%{version}.tar.gz"
-if [[ ! -f base/cvd/adb/BUILD.bazel || ! -x base/cvd/tools/ensure_crosvm_git_mirror.sh ]]; then
+if [[ ! -f base/cvd/adb/BUILD.bazel || ! -x base/cvd/tools/ensure_bazel_git_mirrors.sh ]]; then
   echo "Repairing incomplete extracted source tree from ${SOURCE_TARBALL}"
   tar -xzf "${SOURCE_TARBALL}" --strip-components=2 -C base \
     "android-cuttlefish-%{version}/base/cvd"
@@ -160,7 +160,9 @@ BAZEL_REPOSITORY_CACHE="$BAZEL_CACHE_ROOT/repository"
 BAZEL_DISK_CACHE="$BAZEL_CACHE_ROOT/disk"
 BAZEL_DISTDIR="$BAZEL_CACHE_ROOT/distdir"
 BAZEL_TMPDIR="${CUTTLEFISH_BAZEL_TMPDIR:-$BAZEL_CACHE_ROOT/tmp}"
-mkdir -p "$BAZEL_OUTPUT_USER_ROOT" "$BAZEL_REPOSITORY_CACHE" "$BAZEL_DISK_CACHE" "$BAZEL_DISTDIR" "$BAZEL_TMPDIR"
+BAZEL_GIT_MIRROR_ROOT="$BAZEL_CACHE_ROOT/git-mirrors"
+BAZEL_GIT_CONFIG="$BAZEL_CACHE_ROOT/gitconfig"
+mkdir -p "$BAZEL_OUTPUT_USER_ROOT" "$BAZEL_REPOSITORY_CACHE" "$BAZEL_DISK_CACHE" "$BAZEL_DISTDIR" "$BAZEL_TMPDIR" "$BAZEL_GIT_MIRROR_ROOT"
 # Keep Bazel's output tree and crate_universe temp workspaces out of the
 # rpmbuild BUILD directory. That directory is transient and can hit space
 # limits while external git repos are materialized.
@@ -170,7 +172,12 @@ retry_count=0
 max_retries=9
 retry_delay=60
 while true; do
-  if ./tools/ensure_crosvm_git_mirror.sh && \
+  # Pre-populate mirrors for the most expensive and flaky git_repository
+  # fetches so retries happen before the long Bazel build starts.
+  if CUTTLEFISH_BAZEL_GIT_MIRROR_ROOT="$BAZEL_GIT_MIRROR_ROOT" \
+    CUTTLEFISH_BAZEL_GIT_CONFIG="$BAZEL_GIT_CONFIG" \
+    ./tools/ensure_bazel_git_mirrors.sh && \
+    GIT_CONFIG_GLOBAL="$BAZEL_GIT_CONFIG" GIT_CONFIG_NOSYSTEM=1 \
     DISABLE_BAZEL_WRAPPER=yes USE_BAZEL_VERSION=8.5.1 \
     bazel --output_user_root="$BAZEL_OUTPUT_USER_ROOT" build -c opt \
     --repository_cache="$BAZEL_REPOSITORY_CACHE" \
@@ -185,6 +192,8 @@ while true; do
     'cuttlefish/package:metrics' \
     --spawn_strategy=local \
     --repo_env=TMPDIR="$BAZEL_TMPDIR" \
+    --repo_env=GIT_CONFIG_GLOBAL="$BAZEL_GIT_CONFIG" \
+    --repo_env=GIT_CONFIG_NOSYSTEM=1 \
     --workspace_status_command=../stamp_helper.sh \
     --build_tag_filters=-clang-tidy; then
     break
