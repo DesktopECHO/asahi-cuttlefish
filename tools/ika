@@ -1,3 +1,17 @@
+# Checks if a flag was supplied by the user in the arguments
+user_supplied_flag() {
+  local flag="$1"
+  shift
+  local arg
+  for arg in "$@"; do
+    case "${arg}" in
+      --${flag}=*|--${flag}|-${flag}=*|-${flag})
+        return 0
+        ;;
+    esac
+  done
+  return 1
+}
 #!/usr/bin/bash
 
 set -euo pipefail
@@ -54,15 +68,7 @@ count_performance_cores() {
   grep -hxF "${max_cap}" /sys/devices/system/cpu/cpu*/cpu_capacity 2>/dev/null | wc -l
 }
 
-# ============================================================================
-# Compute Configuration Defaults (passed to cvd_internal_start)
-# ============================================================================
-declare -A CVD_COMPUTE_DEFAULTS=(
-  [cpus]="$(count_performance_cores)"
-  [memory_mb]="4096"
-  [prefer_performance_cores]="true"
-  [enable_bootanimation]="false"
-)
+
 
 # ============================================================================
 # GPU Configuration Defaults (passed to cvd_internal_start)
@@ -85,6 +91,16 @@ declare -A CVD_NETWORK_DEFAULTS=(
   [enable_host_uwb]="false"
   [netsim_bt]="true"
   [netsim_uwb]="false"
+)
+
+# ============================================================================
+# Compute Configuration Defaults (passed to cvd_internal_start)
+# ============================================================================
+declare -A CVD_COMPUTE_DEFAULTS=(
+  [cpus]="$(count_performance_cores)"
+  [memory_mb]="4096"
+  [prefer_performance_cores]="true"
+  [enable_bootanimation]="false"
 )
 
 # ============================================================================
@@ -123,10 +139,6 @@ declare -A CVD_OVERLAY_DEFAULTS=(
 # Convenience variables
 CVD_GPU_MODE="${CVD_GPU_DEFAULTS[gpu_mode]}"
 CVD_ENABLE_WIFI="${CVD_NETWORK_DEFAULTS[enable_wifi]}"
-CVD_WIFI_AUTO_CONNECT="${CVD_WIFI_DEFAULTS[wifi_auto_connect]}"
-CVD_WIFI_AUTO_SSID="${CVD_WIFI_DEFAULTS[wifi_auto_ssid]}"
-CVD_WIFI_AUTO_SECURITY="${CVD_WIFI_DEFAULTS[wifi_auto_security]}"
-CVD_WIFI_AUTO_PASSPHRASE="${CVD_WIFI_DEFAULTS[wifi_auto_passphrase]}"
 : "${CVD_BOOT_MESSAGE:=${CVD_BOOT_DEFAULTS[boot_message]}}"
 : "${CVD_BOOT_TIMEOUT_SEC:=${CVD_BOOT_DEFAULTS[boot_timeout_sec]}}"
 
@@ -558,82 +570,7 @@ wait_for_adb_device_while_running() {
   return 1
 }
 
-wifi_connected_to_target() {
-  local adb_serial="$1"
 
-  adb -s "${adb_serial}" shell cmd wifi status 2>/dev/null |
-    grep -Fq "Wifi is connected to \"${CVD_WIFI_AUTO_SSID}\""
-}
-
-maybe_configure_virtual_wifi() {
-  local adb_serial="$1"
-  local wifi_enabled="$2"
-
-  if [[ "${wifi_enabled}" != "true" ]]; then
-    log "virtual Wi-Fi disabled for this launch; skipping guest Wi-Fi setup."
-    return 0
-  fi
-
-  if [[ "${CVD_WIFI_AUTO_CONNECT}" != "true" ]]; then
-    log "virtual Wi-Fi auto-connect disabled; skipping guest Wi-Fi setup."
-    return 0
-  fi
-
-  if ! command -v adb >/dev/null 2>&1; then
-    log "adb not found; skipping virtual Wi-Fi setup."
-    return 1
-  fi
-
-  if ! wait_for_adb_device_while_running "${adb_serial}"; then
-    return 1
-  fi
-
-  if wifi_connected_to_target "${adb_serial}"; then
-    log "virtual Wi-Fi already connected to ${CVD_WIFI_AUTO_SSID}."
-    return 0
-  fi
-
-  log "enabling Wi-Fi on ${adb_serial}"
-  adb -s "${adb_serial}" shell cmd wifi set-wifi-enabled enabled >/dev/null 2>&1 ||
-    adb -s "${adb_serial}" shell svc wifi enable >/dev/null 2>&1 || true
-  adb -s "${adb_serial}" shell cmd wifi start-scan >/dev/null 2>&1 || true
-  sleep 1
-
-  log "connecting Wi-Fi network ${CVD_WIFI_AUTO_SSID}"
-  if [[ -n "${CVD_WIFI_AUTO_PASSPHRASE}" ]]; then
-    adb -s "${adb_serial}" shell cmd wifi connect-network \
-      "${CVD_WIFI_AUTO_SSID}" \
-      "${CVD_WIFI_AUTO_SECURITY}" \
-      "${CVD_WIFI_AUTO_PASSPHRASE}" >/dev/null 2>&1 || true
-  else
-    adb -s "${adb_serial}" shell cmd wifi connect-network \
-      "${CVD_WIFI_AUTO_SSID}" \
-      "${CVD_WIFI_AUTO_SECURITY}" >/dev/null 2>&1 || true
-  fi
-
-  while has_live_cvd_processes; do
-    if wifi_connected_to_target "${adb_serial}"; then
-      log "virtual Wi-Fi connected to ${CVD_WIFI_AUTO_SSID}."
-      return 0
-    fi
-    sleep 1.5
-  done
-
-  log "virtual Wi-Fi setup stopped because Cuttlefish exited before connection completed."
-  return 1
-}
-
-schedule_virtual_wifi_configuration() {
-  local adb_serial="$1"
-  local wifi_enabled="$2"
-
-  (
-    maybe_configure_virtual_wifi "${adb_serial}" "${wifi_enabled}" || true
-  ) &
-
-  disown || true
-  log "scheduled guest Wi-Fi auto-connect in the background"
-}
 
 wait_for_boot() {
   local launcher_log="$1"
@@ -847,7 +784,7 @@ start_cvd() {
     log "timezone: ${tz}"
   fi
 
-  wifi_enabled="$(flag_value "enable_wifi" "${CVD_ENABLE_WIFI}" "${args[@]}")"
+
 
   log "starting Cuttlefish with $(basename "${CVD_BIN}")"
   printf '[%s] starting Cuttlefish with %s\n' "${SCRIPT_NAME}" "$(basename "${CVD_BIN}")" >&3
@@ -876,7 +813,7 @@ start_cvd() {
   log "boot completed after seeing: ${CVD_BOOT_MESSAGE}"
   respond "Android virtual device running"
   maybe_start_scrcpy "${adb_serial}" "${launcher_log}" "${fullscreen_mode}" "${launcher_log_offset}" || true
-  schedule_virtual_wifi_configuration "${adb_serial}" "${wifi_enabled}"
+
 }
 
 stop_cvd_internal() {
