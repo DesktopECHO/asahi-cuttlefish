@@ -73,7 +73,7 @@ struct sc_screen {
     struct sc_size frame_size;
     struct sc_size content_size; // rotated frame_size
     // Last requested remote display size (in device orientation), used to
-    // deduplicate flex-display resize requests.
+    // Deduplicate resize requests while dpi-driven resizing is active.
     struct sc_size last_requested_display_size;
     sc_tick last_resize_request_tick;
     bool transient_stretch;

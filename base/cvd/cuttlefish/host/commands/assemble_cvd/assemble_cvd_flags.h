@@ -75,11 +75,7 @@ DECLARE_bool(enable_automotive_proxy);
 DECLARE_vec(enable_vhal_proxy_server);
 DECLARE_int32(vhal_proxy_server_instance_num);
 
-/**
- * crosvm sandbox feature requires /var/empty and seccomp directory
- *
- * Also see SetDefaultFlagsForCrosvm()
- */
+/* Disabled by default. Explicitly enable when sandbox prerequisites are met. */
 DECLARE_vec(enable_sandbox);
 
 DECLARE_vec(enable_virtiofs);

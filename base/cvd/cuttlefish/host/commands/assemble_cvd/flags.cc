@@ -64,6 +64,7 @@
 #include "cuttlefish/host/commands/assemble_cvd/flags/display_proto.h"
 #include "cuttlefish/host/commands/assemble_cvd/flags/extra_kernel_cmdline.h"
 #include "cuttlefish/host/commands/assemble_cvd/flags/gpu_mode.h"
+#include "cuttlefish/host/commands/assemble_cvd/flags_defaults.h"
 #include "cuttlefish/host/commands/assemble_cvd/flags/guest_enforce_security.h"
 #include "cuttlefish/host/commands/assemble_cvd/flags/initramfs_path.h"
 #include "cuttlefish/host/commands/assemble_cvd/flags/kernel_path.h"
@@ -1144,17 +1145,12 @@ Result<CuttlefishConfig> InitializeCuttlefishConfiguration(
           const_instance.PerInstanceInternalUdsPath("frames.sock"));
     }
 
-    // 1. Keep original code order SetCommandLineOptionWithMode("enable_sandbox")
-    // then set_enable_sandbox later.
-    // 2. SetCommandLineOptionWithMode condition: if gpu_mode or console,
-    // then SetCommandLineOptionWithMode false as original code did,
-    // otherwise keep default enable_sandbox value.
-    // 3. Sepolicy rules need to be updated to support gpu mode. Temporarily disable
-    // auto-enabling sandbox when gpu is enabled (b/152323505).
+    // Keep the original ordering: set the per-instance defaults first, then
+    // write the resolved value to the instance config later.
     default_enable_sandbox += comma_str;
     default_enable_virtiofs += comma_str;
     if (gpu_mode != GpuMode::GuestSwiftshader) {
-      // original code, just moved to each instance setting block
+      // Preserve the legacy default-off behavior for unsupported GPU modes.
       default_enable_sandbox += "false";
       default_enable_virtiofs += "false";
     } else {
@@ -1386,20 +1382,14 @@ Result<void> SetDefaultFlagsForCrosvm(
   auto instance_nums =
       CF_EXPECT(InstanceNumsCalculator().FromGlobalGflags().Calculate());
 
-  std::set<Arch> supported_archs{Arch::X86_64};
-  bool default_enable_sandbox =
-      supported_archs.find(HostArch()) != supported_archs.end() &&
-      EnsureDirectoryExists(kCrosvmVarEmptyDir).ok() &&
-      CF_EXPECT(IsDirectoryEmpty(kCrosvmVarEmptyDir)) &&
-      !IsRunningInContainer();
-
   std::string default_enable_sandbox_str = "";
   for (int instance_index = 0; instance_index < instance_nums.size();
        instance_index++) {
     if (instance_index > 0) {
       default_enable_sandbox_str += ",";
     }
-    default_enable_sandbox_str += fmt::format("{}", default_enable_sandbox);
+    default_enable_sandbox_str +=
+        fmt::format("{}", CF_DEFAULTS_ENABLE_SANDBOX);
   }
   // This is the 1st place to set "enable_sandbox" flag value
   SetCommandLineOptionWithMode("enable_sandbox",

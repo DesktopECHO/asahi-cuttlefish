@@ -109,8 +109,8 @@ _scrcpy() {
         --window-y=
         --window-width=
         --window-height=
-        -x --flex-display
-        --flex-display="
+        -x --dpi
+        --dpi="
 
     _init_completion -s || return
 
@@ -218,7 +218,7 @@ _scrcpy() {
         |--max-fps \
         |-m|--max-size \
         |--new-display \
-        |--flex-display \
+        |--dpi \
         |-p|--port \
         |--push-target \
         |--rotation \

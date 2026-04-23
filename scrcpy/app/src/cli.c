@@ -790,8 +790,8 @@ static const struct sc_option options[] = {
                 "bottom or at the sides if needed).\n"
                 "\"disabled\": render the display at the top-left corner, "
                 "without scaling.\n"
-                "Default is \"natural\". With --flex-display, scrcpy fills the "
-                "window after the display resize is applied.",
+                "Default is \"natural\". With --dpi, scrcpy fills the window "
+                "after the display resize is applied.",
     },
     {
         .longopt_id = OPT_REQUIRE_AUDIO,
@@ -1018,7 +1018,7 @@ static const struct sc_option options[] = {
     },
     {
         .shortopt = 'x',
-        .longopt = "flex-display",
+        .longopt = "dpi",
         .argdesc = "[dpi]",
         .optional_arg = true,
         .text = "Continuously resize the display to match the window.\n"
@@ -3121,29 +3121,29 @@ parse_args_with_getopt(struct scrcpy_cli_args *args, int argc, char *argv[],
 
     if (opts->flex_display) {
         if (opts->video_source != SC_VIDEO_SOURCE_DISPLAY) {
-            LOGE("-x/--flex-display is only available with "
+            LOGE("-x/--dpi is only available with "
                  "--video-source=display");
             return false;
         }
 
         if (!opts->video) {
-            LOGE("-x/--flex-display is incompatible with --no-video");
+            LOGE("-x/--dpi is incompatible with --no-video");
             return false;
         }
 
         if (!opts->new_display && opts->display_id != 0) {
-            LOGE("-x/--flex-display is only supported on --new-display or "
+            LOGE("-x/--dpi is only supported on --new-display or "
                  "on the primary display (--display-id=0)");
             return false;
         }
 
         if (opts->max_size) {
-            LOGE("--max-size is not compatible with -x/--flex-display");
+            LOGE("--max-size is not compatible with -x/--dpi");
             return false;
         }
 
         if (opts->crop) {
-            LOGE("--crop is not compatible with -x/--flex-display");
+            LOGE("--crop is not compatible with -x/--dpi");
             return false;
         }
 

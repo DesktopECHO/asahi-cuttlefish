@@ -523,7 +523,7 @@ Possible values are "natural" and "disabled":
  - "natural": preserve the aspect ratio and fit the window as best as possible (black bars are added either at the top and bottom or at the sides if needed).
  - "disabled": render the display at the top-left corner, without scaling.
 
-Default is "natural", unless --flex-display is set, in which case it is "disabled".
+Default is "natural", unless --dpi is set, in which case it is "disabled".
 
 .TP
 .B \-\-require\-audio
@@ -696,8 +696,12 @@ Set the initial window height.
 Default is 0 (automatic).
 
 .TP
-.B \-x, \-\-flex\-display
-Continuously resize the virtual display to match the window.
+.BI "\-x, \-\-dpi\fR[=\fIdpi\fR]"
+Continuously resize the display to match the window.
+
+This applies to displays created with \fB\-\-new\-display\fR, and to the primary display (display 0).
+
+Optionally provide a fixed display density for primary display resizing.
 
 .SH EXIT STATUS
 .B scrcpy

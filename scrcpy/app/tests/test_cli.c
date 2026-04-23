@@ -121,7 +121,7 @@ static void test_options2(void) {
     assert(opts->record_format == SC_RECORD_FORMAT_MP4);
 }
 
-static void test_flex_display_with_dpi(void) {
+static void test_dpi_with_value(void) {
     struct scrcpy_cli_args args = {
         .opts = scrcpy_options_default,
         .help = false,
@@ -130,7 +130,7 @@ static void test_flex_display_with_dpi(void) {
 
     char *argv[] = {
         "scrcpy",
-        "--flex-display=240",
+        "--dpi=240",
     };
 
     bool ok = scrcpy_parse_args(&args, ARRAY_LEN(argv), argv);
@@ -141,7 +141,7 @@ static void test_flex_display_with_dpi(void) {
     assert(opts->flex_display_dpi == 240);
 }
 
-static void test_flex_display_without_dpi(void) {
+static void test_dpi_without_value(void) {
     struct scrcpy_cli_args args = {
         .opts = scrcpy_options_default,
         .help = false,
@@ -150,7 +150,7 @@ static void test_flex_display_without_dpi(void) {
 
     char *argv[] = {
         "scrcpy",
-        "--flex-display",
+        "--dpi",
     };
 
     bool ok = scrcpy_parse_args(&args, ARRAY_LEN(argv), argv);
@@ -197,8 +197,8 @@ int main(int argc, char *argv[]) {
     test_flag_help();
     test_options();
     test_options2();
-    test_flex_display_with_dpi();
-    test_flex_display_without_dpi();
+    test_dpi_with_value();
+    test_dpi_without_value();
     test_parse_shortcut_mods();
     return 0;
 }

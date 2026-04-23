@@ -413,11 +413,11 @@ execute_server(struct sc_server *server,
         VALIDATE_STRING(params->new_display);
         ADD_PARAM("new_display=%s", params->new_display);
     }
-    if (params->flex_display) {
-        ADD_PARAM("flex_display=true");
+    if (!params->flex_display) {
+        ADD_PARAM("flex_display=false");
     }
     if (params->flex_display_dpi) {
-        ADD_PARAM("flex_display_dpi=%" PRIu16, params->flex_display_dpi);
+        ADD_PARAM("dpi=%" PRIu16, params->flex_display_dpi);
     }
     if (params->display_ime_policy != SC_DISPLAY_IME_POLICY_UNDEFINED) {
         ADD_PARAM("display_ime_policy=%s",

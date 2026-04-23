@@ -65,7 +65,7 @@ public class Options {
     private boolean powerOn = true;
 
     private NewDisplay newDisplay;
-    private boolean flexDisplay;
+    private boolean flexDisplay = true;
     private int flexDisplayDpi;
     private boolean vdDestroyContent = true;
     private boolean vdSystemDecorations = true;
@@ -521,11 +521,11 @@ public class Options {
                 case "flex_display":
                     options.flexDisplay = Boolean.parseBoolean(value);
                     break;
-                case "flex_display_dpi":
+                case "dpi":
                     options.flexDisplayDpi = Integer.parseInt(value);
                     if (options.flexDisplayDpi < 0
                             || options.flexDisplayDpi > 0xFFFF) {
-                        throw new IllegalArgumentException("flex_display_dpi ("
+                        throw new IllegalArgumentException("dpi ("
                                 + options.flexDisplayDpi
                                 + ") must be in [0; 65535]");
                     }

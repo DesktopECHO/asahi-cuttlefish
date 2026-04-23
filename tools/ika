@@ -4,11 +4,48 @@ set -euo pipefail
 
 exec 3>&1
 
+SCRIPT_NAME="$(basename "$0")"
+
 PACKAGED_CVD_HOST_OUT="/usr/lib/cuttlefish-common"
 DEFAULT_CVD_PRODUCT_OUT="/usr/share/cuttlefish-common/lineageos"
 PACKAGED_SCRCPY_BIN="/usr/lib/cuttlefish-common/bin/scrcpy"
 PACKAGED_SCRCPY_SERVER="/usr/lib/cuttlefish-common/share/scrcpy/scrcpy-server"
 SCRCPY_ICON_DIR_DEFAULT="/usr/lib/cuttlefish-common/share/icons/hicolor/256x256/apps"
+
+# Default scrcpy DPI used when neither --dpi nor a valid IKADPI is provided.
+IKA_DEFAULT_DPI="192"
+
+stop_startup_packaged_scrcpy() {
+  local pid
+  local exe_path
+  local deadline
+  local found_match="false"
+
+  while read -r pid; do
+    [[ -n "${pid}" ]] || continue
+
+    exe_path="$(readlink -f "/proc/${pid}/exe" 2>/dev/null || true)"
+    [[ "${exe_path}" == "${PACKAGED_SCRCPY_BIN}" ]] || continue
+
+    if [[ "${found_match}" != "true" ]]; then
+      printf '[%s] stopping existing packaged scrcpy session\n' "${SCRIPT_NAME}" >&2
+      found_match="true"
+    fi
+
+    kill "${pid}" >/dev/null 2>&1 || true
+
+    deadline=$((SECONDS + 5))
+    while kill -0 "${pid}" >/dev/null 2>&1; do
+      if (( SECONDS >= deadline )); then
+        printf '[%s] packaged scrcpy pid %s did not exit cleanly; forcing termination\n' "${SCRIPT_NAME}" "${pid}" >&2
+        kill -9 "${pid}" >/dev/null 2>&1 || true
+        sleep 0.5
+        break
+      fi
+      sleep 0.2
+    done
+  done < <(pgrep -u "${UID}" -x scrcpy || true)
+}
 
 count_performance_cores() {
   local max_cap
@@ -51,14 +88,6 @@ declare -A CVD_NETWORK_DEFAULTS=(
 )
 
 # ============================================================================
-# Display Configuration Defaults (passed to cvd_internal_start)
-# ============================================================================
-#declare -A CVD_DISPLAY_DEFAULTS=(
-#  [x_res]="1728"
-#  [y_res]="1006"
-#)
-
-# ============================================================================
 # Reporting Configuration Defaults (passed to cvd_internal_start)
 # ============================================================================
 declare -A CVD_REPORT_DEFAULTS=(
@@ -80,7 +109,7 @@ declare -A CVD_WIFI_DEFAULTS=(
 # ============================================================================
 declare -A CVD_BOOT_DEFAULTS=(
   [boot_message]="VIRTUAL_DEVICE_BOOT_COMPLETED"
-  [boot_timeout_sec]="60"
+  [boot_timeout_sec]="90"
 )
 
 # ============================================================================
@@ -121,11 +150,9 @@ SCRCPY_SERVER_PATH_OVERRIDE=""
 if [[ -f "${PACKAGED_SCRCPY_SERVER}" ]]; then
   SCRCPY_SERVER_PATH_OVERRIDE="${PACKAGED_SCRCPY_SERVER}"
 fi
-SCRCPY_FLEX_DISPLAY_FLAG="--flex-display=192"
+SCRCPY_DPI_FLAG=""
 
 CVD_PROCESS_REGEX='(^|/)(cvd_internal_start|launch_cvd|run_cvd|crosvm|process_restarter|socket_vsock_proxy|wmediumd|webRTC)([[:space:]]|$)'
-
-SCRIPT_NAME="$(basename "$0")"
 
 log() {
   printf '[%s] %s\n' "${SCRIPT_NAME}" "$*" >&2
@@ -168,16 +195,6 @@ parse_start_options() {
   done
 }
 
-configure_scrcpy_flex_display_flag() {
-  local scrcpy_flex_display="$1"
-
-  if [[ -n "${scrcpy_flex_display}" ]]; then
-    SCRCPY_FLEX_DISPLAY_FLAG="--flex-display=${scrcpy_flex_display}"
-  else
-    SCRCPY_FLEX_DISPLAY_FLAG=""
-  fi
-}
-
 console_notify() {
   local action="$1"
   local elapsed_sec="$2"
@@ -217,7 +234,7 @@ Usage:
 
 Example:
 
-  ${SCRIPT_NAME} start --cpus=2 --memory_mb=2048 --flex-display=240 --fullscreen
+  ${SCRIPT_NAME} start --cpus=2 --memory_mb=2048 --dpi=240 --fullscreen
 
 EOF
 }
@@ -258,14 +275,13 @@ maybe_respond_crosvm_command() {
 
 emit_launch_command() {
   local launch_command
+  local -a env_args=(env)
+
+  append_cvd_env_args env_args
 
   launch_command="$(
     shell_join \
-      env \
-      "HOME=${CVD_HOME_DIR}" \
-      "ANDROID_HOST_OUT=${CVD_HOST_OUT}" \
-      "ANDROID_SOONG_HOST_OUT=${CVD_HOST_OUT}" \
-      "ANDROID_PRODUCT_OUT=${CVD_PRODUCT_OUT}" \
+      "${env_args[@]}" \
       "${CVD_BIN}" \
       "$@"
   )"
@@ -294,42 +310,38 @@ flag_value() {
   printf '%s\n' "${value}"
 }
 
-scrcpy_flex_display_value() {
-  local value="192"
+resolve_scrcpy_dpi() {
+  local explicit_dpi="${1:-}"
 
-  while [[ $# -gt 0 ]]; do
-    case "$1" in
-      --flex-display=*)
-        value="${1#*=}"
-        shift
-        ;;
-      --flex-display)
-        shift
-        [[ $# -gt 0 ]] || die "--flex-display requires a value"
-        value="$1"
-        shift
-        ;;
-      *)
-        shift
-        ;;
-    esac
-  done
+  if [[ -n "${explicit_dpi}" ]]; then
+    printf '%s\n' "${explicit_dpi}"
+    return 0
+  fi
 
-  printf '%s\n' "${value}"
+  if [[ "${IKADPI:-}" =~ ^[0-9]+$ ]] && (( IKADPI >= 72 && IKADPI <= 600 )); then
+    printf '%s\n' "${IKADPI}"
+  else
+    printf '%s\n' "${IKA_DEFAULT_DPI}"
+  fi
 }
 
-append_cvd_args() {
+split_start_args() {
   local -n args_array="$1"
-  shift
+  local -n scrcpy_dpi_ref="$2"
+  shift 2
+
+  scrcpy_dpi_ref=""
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      --flex-display=*)
+      --dpi=*)
+        scrcpy_dpi_ref="${1#*=}"
         shift
         ;;
-      --flex-display)
+      --dpi)
         shift
-        [[ $# -gt 0 ]] || die "--flex-display requires a value"
+        [[ $# -gt 0 ]] || die "--dpi requires a value"
+        scrcpy_dpi_ref="$1"
         shift
         ;;
       *)
@@ -338,6 +350,8 @@ append_cvd_args() {
         ;;
     esac
   done
+
+  scrcpy_dpi_ref="$(resolve_scrcpy_dpi "${scrcpy_dpi_ref}")"
 }
 
 require_executable() {
@@ -365,22 +379,33 @@ apply_default_args() {
   done
 }
 
-run_with_cvd_env() {
-  local config_path=""
-  local -a env_args=(
+append_cvd_env_args() {
+  local -n env_args_ref="$1"
+  local config_path="${2:-}"
+
+  env_args_ref+=(
     "HOME=${CVD_HOME_DIR}"
     "ANDROID_HOST_OUT=${CVD_HOST_OUT}"
     "ANDROID_SOONG_HOST_OUT=${CVD_HOST_OUT}"
     "ANDROID_PRODUCT_OUT=${CVD_PRODUCT_OUT}"
   )
 
+  if [[ -n "${config_path}" ]]; then
+    env_args_ref+=("CUTTLEFISH_CONFIG_FILE=${config_path}")
+  fi
+}
+
+run_with_cvd_env() {
+  local config_path=""
+  local -a env_args=(env)
+
   if [[ "${1:-}" == "--config" ]]; then
     config_path="${2:-}"
     shift 2
-    env_args+=("CUTTLEFISH_CONFIG_FILE=${config_path}")
   fi
 
-  env "${env_args[@]}" "$@"
+  append_cvd_env_args env_args "${config_path}"
+  "${env_args[@]}" "$@"
 }
 
 has_session_group() {
@@ -661,44 +686,22 @@ launcher_log_contains_message_since_offset() {
   tail -c "+$((effective_offset + 1))" "${launcher_log}" 2>/dev/null | grep -Fq "${message}"
 }
 
-stop_running_scrcpy() {
-  local deadline
-
-  if ! pgrep -x scrcpy >/dev/null 2>&1; then
-    return 0
-  fi
-
-  log "stopping existing scrcpy session"
-  pkill -x scrcpy >/dev/null 2>&1 || true
-
-  deadline="$(make_deadline 5)"
-  while pgrep -x scrcpy >/dev/null 2>&1; do
-    if ! within_deadline "${deadline}"; then
-      log "existing scrcpy session did not exit cleanly; forcing termination"
-      pkill -9 -x scrcpy >/dev/null 2>&1 || true
-      sleep 0.5
-      break
-    fi
-    sleep 0.2
-  done
-}
-
 start_scrcpy_with_retries() {
   local adb_serial="$1"
   local fullscreen_mode="${2:-false}"
   local attempt=1
   local max_attempts=5
+  local -a scrcpy_env=()
   local -a scrcpy_cmd=(
     "${SCRCPY_BIN}"
     -s "${adb_serial}"
   )
-  if [[ -n "${SCRCPY_FLEX_DISPLAY_FLAG}" ]]; then
-    scrcpy_cmd+=("${SCRCPY_FLEX_DISPLAY_FLAG}")
+  if [[ -n "${SCRCPY_DPI_FLAG}" ]]; then
+    scrcpy_cmd+=("${SCRCPY_DPI_FLAG}")
   fi
   scrcpy_cmd+=(
     --force-adb-forward
     --window-borderless
-    --render-fit=natural
     --video-bit-rate=36M
     --audio-buffer=80
     --audio-codec=raw
@@ -706,22 +709,20 @@ start_scrcpy_with_retries() {
   )
 
   if [[ -d "${SCRCPY_ICON_DIR_DEFAULT}" ]]; then
-    scrcpy_cmd=(
-      env
-      "SCRCPY_ICON_DIR=${SCRCPY_ICON_DIR_DEFAULT}"
-      "${scrcpy_cmd[@]}"
-    )
+    scrcpy_env+=("SCRCPY_ICON_DIR=${SCRCPY_ICON_DIR_DEFAULT}")
   fi
 
   if [[ -n "${SCRCPY_SERVER_PATH_OVERRIDE}" && -f "${SCRCPY_SERVER_PATH_OVERRIDE}" ]]; then
+    scrcpy_env+=("SCRCPY_SERVER_PATH=${SCRCPY_SERVER_PATH_OVERRIDE}")
+  fi
+
+  if [[ "${#scrcpy_env[@]}" -gt 0 ]]; then
     scrcpy_cmd=(
       env
-      "SCRCPY_SERVER_PATH=${SCRCPY_SERVER_PATH_OVERRIDE}"
+      "${scrcpy_env[@]}"
       "${scrcpy_cmd[@]}"
     )
   fi
-
-  stop_running_scrcpy
 
   while [[ "${attempt}" -le "${max_attempts}" ]]; do
     log "starting scrcpy for ${adb_serial} (attempt ${attempt})"
@@ -805,15 +806,15 @@ start_cvd() {
   local wifi_enabled
   local start_epoch
   local launcher_log_offset="0"
-  local scrcpy_flex_display
+  local scrcpy_dpi
 
   require_executable "${CVD_BIN}" "cvd launcher"
   check_required_groups
   launcher_log="${CVD_LAUNCHER_LOG}"
   adb_serial="$(resolve_adb_serial)"
   start_epoch="$(date +%s)"
-  scrcpy_flex_display="$(scrcpy_flex_display_value "$@")"
-  configure_scrcpy_flex_display_flag "${scrcpy_flex_display}"
+  split_start_args args scrcpy_dpi "$@"
+  SCRCPY_DPI_FLAG="--dpi=${scrcpy_dpi}"
 
   if has_live_cvd_processes; then
     log "Cuttlefish is already running under ${CVD_HOME_DIR}"
@@ -834,13 +835,10 @@ start_cvd() {
     CVD_COMPUTE_DEFAULTS \
     CVD_GPU_DEFAULTS \
     CVD_NETWORK_DEFAULTS \
-    CVD_DISPLAY_DEFAULTS \
     CVD_REPORT_DEFAULTS \
     CVD_OVERLAY_DEFAULTS; do
     apply_default_args "${config_map}" args "$@"
   done
-
-  append_cvd_args args "$@"
 
   local tz
   tz="$(readlink /etc/localtime 2>/dev/null | sed 's|.*/zoneinfo/||')"
@@ -884,34 +882,29 @@ start_cvd() {
 stop_cvd_internal() {
   local clear_instance_dirs="${1:-false}"
   shift || true
+  local stop_action="stopping Cuttlefish"
   local stop_ok="false"
+  local -a run_with_args=()
   local -a stop_args=()
 
   if [[ "${clear_instance_dirs}" == "true" ]]; then
+    stop_action="stopping Cuttlefish and clearing instance dirs"
     stop_args+=("--clear_instance_dirs")
   fi
   stop_args+=("$@")
 
   require_executable "${CVD_STOP_BIN}" "cvd stop helper"
 
-  if [[ "${clear_instance_dirs}" == "true" ]]; then
-    log "stopping Cuttlefish and clearing instance dirs with $(basename "${CVD_STOP_BIN}")"
-  else
-    log "stopping Cuttlefish with $(basename "${CVD_STOP_BIN}")"
+  if [[ -f "${CVD_CONFIG_PATH}" ]]; then
+    run_with_args+=(--config "${CVD_CONFIG_PATH}")
   fi
 
-  if [[ -f "${CVD_CONFIG_PATH}" ]]; then
-    if run_with_cvd_env --config "${CVD_CONFIG_PATH}" "${CVD_STOP_BIN}" "${stop_args[@]}"; then
-      stop_ok="true"
-    else
-      log "primary stop helper returned non-zero"
-    fi
+  log "${stop_action} with $(basename "${CVD_STOP_BIN}")"
+
+  if run_with_cvd_env "${run_with_args[@]}" "${CVD_STOP_BIN}" "${stop_args[@]}"; then
+    stop_ok="true"
   else
-    if run_with_cvd_env "${CVD_STOP_BIN}" "${stop_args[@]}"; then
-      stop_ok="true"
-    else
-      log "primary stop helper returned non-zero"
-    fi
+    log "primary stop helper returned non-zero"
   fi
 
   if [[ "${stop_ok}" != "true" ]]; then
@@ -936,6 +929,18 @@ stop_cvd_internal() {
 
   respond "Android virtual device stopped."
 }
+
+exec_start_command() {
+  local fullscreen_mode="$1"
+  shift
+
+  if [[ "${fullscreen_mode}" == "true" ]]; then
+    exec "$0" start --fullscreen "$@"
+  fi
+
+  exec "$0" start "$@"
+}
+
 main() {
   local command="${1:-help}"
   local fullscreen_mode
@@ -944,6 +949,7 @@ main() {
   case "${command}" in
     start)
       CONSOLE_FAILURE_MESSAGE="Startup Failed."
+      stop_startup_packaged_scrcpy
       redirect_start_logs
       shift
       start_args=()
@@ -964,10 +970,7 @@ main() {
       parse_start_options fullscreen_mode start_args "$@"
       stop_cvd_internal false
       sleep 0.5
-      if [[ "${fullscreen_mode}" == "true" ]]; then
-        exec "$0" start --fullscreen "${start_args[@]}"
-      fi
-      exec "$0" start "${start_args[@]}"
+      exec_start_command "${fullscreen_mode}" "${start_args[@]}"
       ;;
     status)
       if has_live_cvd_processes; then

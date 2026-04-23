@@ -113,7 +113,7 @@ arguments=(
     '--window-y=[Set the initial window vertical position]'
     '--window-width=[Set the initial window width]'
     '--window-height=[Set the initial window height]'
-    {-x,--flex-display}'[Continuously resize display to match the window (new display or primary)]'
+    {-x,--dpi}'[Continuously resize display to match the window (new display or primary)]'
 )
 
 _arguments -s $arguments

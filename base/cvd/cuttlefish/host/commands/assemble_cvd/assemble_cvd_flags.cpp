@@ -151,20 +151,13 @@ DEFINE_vec(enable_vhal_proxy_server,
            fmt::format("{}", CF_DEFAULTS_ENABLE_VHAL_PROXY_SERVER),
            "Enable the vhal proxy service on the host.");
 
-/**
- * crosvm sandbox feature requires /var/empty and seccomp directory
- *
- * Also see SetDefaultFlagsForCrosvm()
- */
+/* Disabled by default. Explicitly enable when sandbox prerequisites are met. */
 DEFINE_vec(
     enable_sandbox, fmt::format("{}", CF_DEFAULTS_ENABLE_SANDBOX),
     "Enable crosvm sandbox assuming /var/empty and seccomp directories exist. "
     "--noenable-sandbox will disable crosvm sandbox. "
-    "When no option is given, sandbox is disabled if Cuttlefish is running "
-    "inside a container, or if GPU is enabled (b/152323505), "
-    "or if the empty /var/empty directory either does not exist and "
-    "cannot be created. Otherwise, sandbox is enabled on the supported "
-    "architecture when no option is given.");
+    "When no option is given, sandbox remains disabled unless explicitly "
+    "enabled.");
 
 DEFINE_vec(enable_virtiofs, fmt::format("{}", CF_DEFAULTS_ENABLE_VIRTIOFS),
            "Enable shared folder using virtiofs");

@@ -384,7 +384,7 @@ sc_screen_update_content_rect(struct sc_screen *screen) {
             && screen->video
             && !screen->disconnected
             && screen->render_fit != SC_RENDER_FIT_DISABLED) {
-        // In flex-display mode, the host window is the source of truth.
+        // In dpi resize mode, the host window is the source of truth.
         // Once the remote display catches up, continue filling the window
         // instead of falling back to aspect-preserving letterboxing.
         screen->rect.x = 0;
@@ -1144,7 +1144,7 @@ set_content_size(struct sc_screen *screen, struct sc_size new_content_size,
                  bool resize) {
     assert(screen->video);
 
-    // In flex-display mode, the host window size is the source of truth:
+    // In dpi resize mode, the host window size is the source of truth:
     // never resize the host window in response to frame/session size changes.
     if (resize && !screen->flex_display) {
         if (is_windowed(screen)) {
