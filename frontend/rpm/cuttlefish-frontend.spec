@@ -1,6 +1,6 @@
 Name:           ika-frontend
 Version:        1.51.0
-Release:        2
+Release:        2%{?dist}
 Summary:        Frontend and orchestration packages for Cuttlefish on Fedora
 License:        Apache-2.0
 URL:            https://github.com/google/android-cuttlefish
