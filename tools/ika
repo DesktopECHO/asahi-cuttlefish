@@ -130,15 +130,14 @@ CVD_GPU_MODE="${CVD_GPU_DEFAULTS[gpu_mode]}"
 : "${CVD_BOOT_MESSAGE:=${CVD_BOOT_DEFAULTS[boot_message]}}"
 : "${CVD_BOOT_TIMEOUT_SEC:=${CVD_BOOT_DEFAULTS[boot_timeout_sec]}}"
 
-mkdir -p "${HOME}/.local/ika"
-START_LOG_FILE="${HOME}/.local/ika/ikastart.log"
-
 # ============================================================================
 # Environment Paths
 # ============================================================================
 : "${CVD_HOST_OUT:=${PACKAGED_CVD_HOST_OUT}}"
 : "${CVD_PRODUCT_OUT:=${DEFAULT_CVD_PRODUCT_OUT}}"
-: "${CVD_HOME_DIR:=${HOME}/.local/ika}"
+: "${CVD_HOME_DIR:=${HOME}/ika}"
+mkdir -p "${CVD_HOME_DIR}"
+START_LOG_FILE="${CVD_HOME_DIR}/ikastart.log"
 CVD_BIN="${CVD_HOST_OUT}/bin/cvd_internal_start"
 CVD_CLI_BIN="${CVD_HOST_OUT}/bin/cvd"
 CVD_STOP_BIN="${CVD_HOST_OUT}/bin/cvd_internal_stop"

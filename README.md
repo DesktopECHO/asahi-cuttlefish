@@ -68,7 +68,7 @@ By default `ika` uses:
 
 - host tools from `/usr/lib/cuttlefish-common`
 - the packaged LineageOS tree from `/usr/share/cuttlefish-common/lineageos`
-- instance state under `~/.config/cuttlefish`
+- instance state under `~/ika`
 - host Bluetooth, with Wi-Fi, netsim, and UWB disabled unless you override them
 
 For this Fedora Asahi workflow, `guest_swiftshader` is the documented GPU mode
