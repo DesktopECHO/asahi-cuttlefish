@@ -1,3 +1,18 @@
+#!/usr/bin/bash
+
+set -euo pipefail
+exec 3>&1
+
+SCRIPT_NAME="$(basename "$0")"
+PACKAGED_CVD_HOST_OUT="/usr/lib/cuttlefish-common"
+DEFAULT_CVD_PRODUCT_OUT="/usr/share/cuttlefish-common/lineageos"
+PACKAGED_SCRCPY_BIN="/usr/lib/cuttlefish-common/bin/scrcpy"
+PACKAGED_SCRCPY_SERVER="/usr/lib/cuttlefish-common/share/scrcpy/scrcpy-server"
+SCRCPY_ICON_DIR_DEFAULT="/usr/lib/cuttlefish-common/share/icons/hicolor/256x256/apps"
+
+# Default scrcpy DPI used when neither --dpi nor a valid IKADPI is provided.
+IKA_DEFAULT_DPI="192"
+
 # Checks if a flag was supplied by the user in the arguments
 user_supplied_flag() {
   local flag="$1"
@@ -12,22 +27,6 @@ user_supplied_flag() {
   done
   return 1
 }
-#!/usr/bin/bash
-
-set -euo pipefail
-
-exec 3>&1
-
-SCRIPT_NAME="$(basename "$0")"
-
-PACKAGED_CVD_HOST_OUT="/usr/lib/cuttlefish-common"
-DEFAULT_CVD_PRODUCT_OUT="/usr/share/cuttlefish-common/lineageos"
-PACKAGED_SCRCPY_BIN="/usr/lib/cuttlefish-common/bin/scrcpy"
-PACKAGED_SCRCPY_SERVER="/usr/lib/cuttlefish-common/share/scrcpy/scrcpy-server"
-SCRCPY_ICON_DIR_DEFAULT="/usr/lib/cuttlefish-common/share/icons/hicolor/256x256/apps"
-
-# Default scrcpy DPI used when neither --dpi nor a valid IKADPI is provided.
-IKA_DEFAULT_DPI="192"
 
 stop_startup_packaged_scrcpy() {
   local pid
