@@ -125,6 +125,14 @@ declare -A CVD_OVERLAY_DEFAULTS=(
   [use_sdcard]="false"
 )
 
+CVD_DEFAULT_ARG_MAPS=(
+  CVD_COMPUTE_DEFAULTS
+  CVD_GPU_DEFAULTS
+  CVD_NETWORK_DEFAULTS
+  CVD_REPORT_DEFAULTS
+  CVD_OVERLAY_DEFAULTS
+)
+
 # Convenience variables
 CVD_GPU_MODE="${CVD_GPU_DEFAULTS[gpu_mode]}"
 : "${CVD_BOOT_MESSAGE:=${CVD_BOOT_DEFAULTS[boot_message]}}"
@@ -288,27 +296,6 @@ emit_launch_command() {
   log "launch command: cd $(printf '%q' "${CVD_PRODUCT_OUT}") && ${launch_command}"
 }
 
-flag_value() {
-  local flag="$1"
-  local default_value="$2"
-  shift 2
-  local value="${default_value}"
-  local arg
-
-  for arg in "$@"; do
-    case "${arg}" in
-      "--${flag}="*|"-${flag}="*)
-        value="${arg#*=}"
-        ;;
-      "--${flag}"|"-${flag}")
-        value="true"
-        ;;
-    esac
-  done
-
-  printf '%s\n' "${value}"
-}
-
 resolve_scrcpy_dpi() {
   local explicit_dpi="${1:-}"
 
@@ -385,6 +372,27 @@ apply_default_args() {
       fi
     fi
   done
+}
+
+apply_start_default_args() {
+  local args_array_name="$1"
+  shift
+  local config_map
+
+  for config_map in "${CVD_DEFAULT_ARG_MAPS[@]}"; do
+    apply_default_args "${config_map}" "${args_array_name}" "$@"
+  done
+}
+
+append_host_timezone_arg() {
+  local -n args_array="$1"
+  local tz
+
+  tz="$(readlink /etc/localtime 2>/dev/null | sed 's|.*/zoneinfo/||')"
+  [[ -n "${tz}" ]] || return 0
+
+  args_array+=("--extra_bootconfig_args=androidboot.timezone=\"${tz}\"")
+  log "timezone: ${tz}"
 }
 
 append_cvd_env_args() {
@@ -551,23 +559,6 @@ make_deadline() {
   fi
 }
 
-wait_for_adb_device_while_running() {
-  local adb_serial="$1"
-
-  while has_live_cvd_processes; do
-    adb connect "${adb_serial}" >/dev/null 2>&1 || true
-    if [[ "$(adb -s "${adb_serial}" get-state 2>/dev/null || true)" == "device" ]]; then
-      return 0
-    fi
-    sleep 1.5
-  done
-
-  log "guest ADB never became ready before Cuttlefish exited."
-  return 1
-}
-
-
-
 wait_for_boot() {
   local launcher_log="$1"
   local deadline="$2"
@@ -729,6 +720,20 @@ maybe_start_scrcpy() {
   return 0
 }
 
+log_start_context() {
+  local launcher_log="$1"
+  shift
+
+  log "starting Cuttlefish with $(basename "${CVD_BIN}")"
+  printf '[%s] starting Cuttlefish with %s\n' "${SCRIPT_NAME}" "$(basename "${CVD_BIN}")" >&3
+  log "HOME=${CVD_HOME_DIR}"
+  log "ANDROID_HOST_OUT=${CVD_HOST_OUT}"
+  log "ANDROID_PRODUCT_OUT=${CVD_PRODUCT_OUT}"
+  log "gpu_mode=${CVD_GPU_MODE}"
+  log "launcher_log=${launcher_log}"
+  emit_launch_command "$@"
+}
+
 start_cvd() {
   local fullscreen_mode="${1:-false}"
   shift || true
@@ -760,35 +765,10 @@ start_cvd() {
     launcher_log_offset="$(stat -c '%s' "${launcher_log}" 2>/dev/null || echo 0)"
   fi
 
+  apply_start_default_args args "$@"
+  append_host_timezone_arg args
 
-  # Apply default arguments from configuration maps.
-  local config_map
-  for config_map in \
-    CVD_COMPUTE_DEFAULTS \
-    CVD_GPU_DEFAULTS \
-    CVD_NETWORK_DEFAULTS \
-    CVD_REPORT_DEFAULTS \
-    CVD_OVERLAY_DEFAULTS; do
-    apply_default_args "${config_map}" args "$@"
-  done
-
-  local tz
-  tz="$(readlink /etc/localtime 2>/dev/null | sed 's|.*/zoneinfo/||')"
-  if [[ -n "${tz}" ]]; then
-    args+=("--extra_bootconfig_args=androidboot.timezone=\"${tz}\"")
-    log "timezone: ${tz}"
-  fi
-
-
-
-  log "starting Cuttlefish with $(basename "${CVD_BIN}")"
-  printf '[%s] starting Cuttlefish with %s\n' "${SCRIPT_NAME}" "$(basename "${CVD_BIN}")" >&3
-  log "HOME=${CVD_HOME_DIR}"
-  log "ANDROID_HOST_OUT=${CVD_HOST_OUT}"
-  log "ANDROID_PRODUCT_OUT=${CVD_PRODUCT_OUT}"
-  log "gpu_mode=${CVD_GPU_MODE}"
-  log "launcher_log=${launcher_log}"
-  emit_launch_command "${args[@]}"
+  log_start_context "${launcher_log}" "${args[@]}"
 
   (
     cd "${CVD_PRODUCT_OUT}"
