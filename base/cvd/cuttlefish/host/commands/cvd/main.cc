@@ -209,7 +209,7 @@ bool ValidateHostConfiguration() {
     for (const auto& cmd : config_commands) {
       std::cerr << "    " << cmd << std::endl;
     }
-    std::cerr << "You may need to logout for the changes to take effect"
+    std::cerr << "NOTE: Reboot for changes to take effect"
               << std::endl;
   }
   return valid;

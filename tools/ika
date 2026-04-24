@@ -10,7 +10,7 @@ PACKAGED_SCRCPY_BIN="/usr/lib/cuttlefish-common/bin/scrcpy"
 PACKAGED_SCRCPY_SERVER="/usr/lib/cuttlefish-common/share/scrcpy/scrcpy-server"
 SCRCPY_ICON_DIR_DEFAULT="/usr/lib/cuttlefish-common/share/icons/hicolor/256x256/apps"
 
-# Default scrcpy DPI used when neither --dpi nor a valid IKADPI is provided.
+# Default DPI used when neither --dpi nor a valid IKADPI is provided.
 IKA_DEFAULT_DPI="192"
 
 # Checks if a flag was supplied by the user in the arguments
@@ -110,16 +110,6 @@ declare -A CVD_REPORT_DEFAULTS=(
 )
 
 # ============================================================================
-# Wi-Fi Auto-Connect Configuration Defaults (internal use only)
-# ============================================================================
-declare -A CVD_WIFI_DEFAULTS=(
-  [wifi_auto_connect]="true"
-  [wifi_auto_ssid]="VirtWifi"
-  [wifi_auto_security]="open"
-  [wifi_auto_passphrase]=""
-)
-
-# ============================================================================
 # Boot & Logging Configuration Defaults (internal use only)
 # ============================================================================
 declare -A CVD_BOOT_DEFAULTS=(
@@ -137,7 +127,6 @@ declare -A CVD_OVERLAY_DEFAULTS=(
 
 # Convenience variables
 CVD_GPU_MODE="${CVD_GPU_DEFAULTS[gpu_mode]}"
-CVD_ENABLE_WIFI="${CVD_NETWORK_DEFAULTS[enable_wifi]}"
 : "${CVD_BOOT_MESSAGE:=${CVD_BOOT_DEFAULTS[boot_message]}}"
 : "${CVD_BOOT_TIMEOUT_SEC:=${CVD_BOOT_DEFAULTS[boot_timeout_sec]}}"
 
@@ -340,6 +329,7 @@ split_start_args() {
   local -n args_array="$1"
   local -n scrcpy_dpi_ref="$2"
   shift 2
+  local dpi_user_supplied="false"
 
   scrcpy_dpi_ref=""
 
@@ -347,12 +337,17 @@ split_start_args() {
     case "$1" in
       --dpi=*)
         scrcpy_dpi_ref="${1#*=}"
+        dpi_user_supplied="true"
+        args_array+=("$1")
         shift
         ;;
       --dpi)
+        args_array+=("$1")
         shift
         [[ $# -gt 0 ]] || die "--dpi requires a value"
         scrcpy_dpi_ref="$1"
+        dpi_user_supplied="true"
+        args_array+=("$1")
         shift
         ;;
       *)
@@ -363,6 +358,9 @@ split_start_args() {
   done
 
   scrcpy_dpi_ref="$(resolve_scrcpy_dpi "${scrcpy_dpi_ref}")"
+  if [[ "${dpi_user_supplied}" != "true" ]]; then
+    args_array+=("--dpi=${scrcpy_dpi_ref}")
+  fi
 }
 
 require_executable() {
@@ -739,7 +737,6 @@ start_cvd() {
   local launcher_log
   local adb_serial
   local boot_deadline
-  local wifi_enabled
   local start_epoch
   local launcher_log_offset="0"
   local scrcpy_dpi

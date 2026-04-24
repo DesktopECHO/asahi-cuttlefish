@@ -68,7 +68,7 @@ Result<void> ValidateHostConfiguration() {
   CF_EXPECTF(vm_manager::ValidateHostConfiguration(&config_commands),
              "Validation of user configuration failed.\n"
              "Execute the following to correctly configure: \n[{}]\n",
-             "You may need to logout for the changes to take effect.\n",
+             "NOTE: Reboot for changes to take effect.\n",
              fmt::join(config_commands, "\n"));
 #endif
   return {};
