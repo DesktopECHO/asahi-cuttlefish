@@ -18,7 +18,7 @@
 #define FLEX_DISPLAY_RESIZE_MIN_INTERVAL SC_TICK_FROM_MS(250)
 #define FLEX_DISPLAY_STRETCH_EVENT_DELAY SC_TICK_FROM_MS(250)
 #define FLEX_DISPLAY_RESIZE_SETTLE_DELAY SC_TICK_FROM_MS(100)
-#define FLEX_DISPLAY_STRETCH_PENDING_MAX SC_TICK_FROM_MS(1000)
+#define FLEX_DISPLAY_POST_RESIZE_BLUR_DELAY SC_TICK_FROM_MS(500)
 #define FLEX_DISPLAY_SIZE_MATCH_TOLERANCE 16
 #define FLEX_DISPLAY_INITIAL_SHOW_MAX_DELAY SC_TICK_FROM_MS(350)
 #define RAW_FRAME_RESIZE_STILL_DELAY SC_TICK_FROM_MS(1000)
@@ -30,8 +30,8 @@
 #define SC_WINDOW_DRAG_REGION_HEIGHT 28
 #define SC_WINDOW_DRAG_HOLD_THRESHOLD SC_TICK_FROM_MS(220)
 #define SC_WINDOW_HOTSPOT_CLICK_MOVE_THRESHOLD 8.0f
-#define FLEX_DISPLAY_BLUR_OFFSET 3.0f
-#define FLEX_DISPLAY_BLUR_ALPHA 10
+#define FLEX_DISPLAY_BLUR_OFFSET 5.0f
+#define FLEX_DISPLAY_BLUR_ALPHA 12
 
 #define DOWNCAST(SINK) container_of(SINK, struct sc_screen, frame_sink)
 
@@ -352,40 +352,11 @@ sc_screen_update_content_rect(struct sc_screen *screen) {
         sc_sdl_get_render_output_size(screen->renderer);
 
     if (screen->flex_display && screen->transient_stretch) {
-        sc_tick now = sc_tick_now();
-        bool recent_resize_event = screen->last_resize_event_tick
-                && now - screen->last_resize_event_tick
-                        < FLEX_DISPLAY_STRETCH_EVENT_DELAY;
-
-        int dw = (int) screen->last_requested_display_size.width
-               - (int) screen->frame_size.width;
-        int dh = (int) screen->last_requested_display_size.height
-               - (int) screen->frame_size.height;
-        int abs_dw = dw >= 0 ? dw : -dw;
-        int abs_dh = dh >= 0 ? dh : -dh;
-        bool waiting_resize_apply =
-            screen->last_requested_display_size.width
-            && screen->last_requested_display_size.height
-            && screen->frame_size.width
-            && screen->frame_size.height
-            && (abs_dw > FLEX_DISPLAY_SIZE_MATCH_TOLERANCE
-                || abs_dh > FLEX_DISPLAY_SIZE_MATCH_TOLERANCE);
-        bool pending_timeout_not_reached = screen->last_resize_request_tick
-                && now - screen->last_resize_request_tick
-                        < FLEX_DISPLAY_STRETCH_PENDING_MAX;
-
-        if (recent_resize_event
-                || (waiting_resize_apply && pending_timeout_not_reached)) {
-            screen->rect.x = 0;
-            screen->rect.y = 0;
-            screen->rect.w = render_size.width;
-            screen->rect.h = render_size.height;
-            return;
-        }
-
-        // The resize event and catch-up window have both elapsed: restore the
-        // regular fit mode.
-        screen->transient_stretch = false;
+        screen->rect.x = 0;
+        screen->rect.y = 0;
+        screen->rect.w = render_size.width;
+        screen->rect.h = render_size.height;
+        return;
     }
 
     if (screen->flex_display
@@ -424,6 +395,9 @@ static void
 sc_screen_schedule_resize_settle(struct sc_screen *screen);
 static void
 sc_screen_force_raw_frame_refresh(struct sc_screen *screen);
+static void
+sc_screen_schedule_resize_settle_after(struct sc_screen *screen,
+                                       Uint32 delay_ms);
 static Uint32 SDLCALL
 sc_screen_resize_settle_timer(void *userdata, SDL_TimerID timerID,
                               Uint32 interval);
@@ -446,6 +420,14 @@ sc_screen_should_hold_resize_preview(struct sc_screen *screen) {
     // waiting for the remote resize request to settle makes the final correction
     // visibly lag behind the user's pointer release.
     return recent_resize_event;
+}
+
+static bool
+sc_screen_resize_blur_hold_elapsed(struct sc_screen *screen, sc_tick now) {
+    return !screen->last_resize_event_tick
+        || now - screen->last_resize_event_tick
+                >= FLEX_DISPLAY_RESIZE_SETTLE_DELAY
+                    + FLEX_DISPLAY_POST_RESIZE_BLUR_DELAY;
 }
 
 static bool
@@ -745,6 +727,16 @@ sc_screen_schedule_resize_settle(struct sc_screen *screen) {
         delay_ms = 1;
     }
 
+    sc_screen_schedule_resize_settle_after(screen, delay_ms);
+}
+
+static void
+sc_screen_schedule_resize_settle_after(struct sc_screen *screen,
+                                       Uint32 delay_ms) {
+    if (!delay_ms) {
+        delay_ms = 1;
+    }
+
     SDL_TimerID old_timer;
     SDL_TimerID new_timer =
         SDL_AddTimer(delay_ms, sc_screen_resize_settle_timer, screen);
@@ -894,10 +886,94 @@ sc_screen_frame_sink_push_session(struct sc_frame_sink *sink,
 }
 
 static void
+sc_screen_recycle_raw_frame_buffer_locked(struct sc_screen *screen,
+                                          uint8_t *pixels, size_t capacity) {
+    if (!pixels || !capacity) {
+        free(pixels);
+        return;
+    }
+
+    for (size_t i = 0; i < SC_RAW_FRAME_BUFFER_POOL_SIZE; ++i) {
+        size_t index = (screen->raw_frame_buffer_next + i)
+                     % SC_RAW_FRAME_BUFFER_POOL_SIZE;
+        struct sc_raw_frame_buffer *buffer =
+            &screen->raw_frame_buffer_pool[index];
+        if (!buffer->pixels) {
+            buffer->pixels = pixels;
+            buffer->capacity = capacity;
+            screen->raw_frame_buffer_next =
+                (index + 1) % SC_RAW_FRAME_BUFFER_POOL_SIZE;
+            return;
+        }
+    }
+
+    size_t smallest = 0;
+    for (size_t i = 1; i < SC_RAW_FRAME_BUFFER_POOL_SIZE; ++i) {
+        if (screen->raw_frame_buffer_pool[i].capacity
+                < screen->raw_frame_buffer_pool[smallest].capacity) {
+            smallest = i;
+        }
+    }
+
+    if (capacity > screen->raw_frame_buffer_pool[smallest].capacity) {
+        free(screen->raw_frame_buffer_pool[smallest].pixels);
+        screen->raw_frame_buffer_pool[smallest].pixels = pixels;
+        screen->raw_frame_buffer_pool[smallest].capacity = capacity;
+        screen->raw_frame_buffer_next =
+            (smallest + 1) % SC_RAW_FRAME_BUFFER_POOL_SIZE;
+    } else {
+        free(pixels);
+    }
+}
+
+uint8_t *
+sc_screen_alloc_raw_frame_buffer(struct sc_screen *screen, size_t size) {
+    if (!size) {
+        return NULL;
+    }
+
+    size_t best = SC_RAW_FRAME_BUFFER_POOL_SIZE;
+    sc_mutex_lock(&screen->mutex);
+    for (size_t i = 0; i < SC_RAW_FRAME_BUFFER_POOL_SIZE; ++i) {
+        struct sc_raw_frame_buffer *buffer =
+            &screen->raw_frame_buffer_pool[i];
+        if (buffer->pixels && buffer->capacity >= size
+                && (best == SC_RAW_FRAME_BUFFER_POOL_SIZE
+                    || buffer->capacity
+                        < screen->raw_frame_buffer_pool[best].capacity)) {
+            best = i;
+        }
+    }
+
+    if (best != SC_RAW_FRAME_BUFFER_POOL_SIZE) {
+        struct sc_raw_frame_buffer *buffer =
+            &screen->raw_frame_buffer_pool[best];
+        uint8_t *pixels = buffer->pixels;
+        buffer->pixels = NULL;
+        buffer->capacity = 0;
+        sc_mutex_unlock(&screen->mutex);
+        return pixels;
+    }
+    sc_mutex_unlock(&screen->mutex);
+
+    return malloc(size);
+}
+
+void
+sc_screen_recycle_raw_frame_buffer(struct sc_screen *screen, uint8_t *pixels,
+                                   size_t capacity) {
+    sc_mutex_lock(&screen->mutex);
+    sc_screen_recycle_raw_frame_buffer_locked(screen, pixels, capacity);
+    sc_mutex_unlock(&screen->mutex);
+}
+
+static void
 sc_screen_raw_frame_clear(struct sc_screen *screen, bool pending) {
     if (pending) {
         if (screen->pending_raw_frame.owns_pixels) {
-            free(screen->pending_raw_frame.pixels);
+            sc_screen_recycle_raw_frame_buffer_locked(
+                screen, screen->pending_raw_frame.pixels,
+                screen->pending_raw_frame.size_bytes);
         }
 #ifndef _WIN32
         if (screen->pending_raw_frame.dmabuf_fd >= 0) {
@@ -909,7 +985,8 @@ sc_screen_raw_frame_clear(struct sc_screen *screen, bool pending) {
         screen->pending_raw_frame_available = false;
     } else {
         if (screen->raw_frame.owns_pixels) {
-            free(screen->raw_frame.pixels);
+            sc_screen_recycle_raw_frame_buffer_locked(
+                screen, screen->raw_frame.pixels, screen->raw_frame.size_bytes);
         }
 #ifndef _WIN32
         if (screen->raw_frame.dmabuf_fd >= 0) {
@@ -1042,7 +1119,7 @@ sc_screen_push_raw_frame(struct sc_screen *screen, uint32_t display_number,
             || !size_bytes) {
         LOGE("Invalid raw frame");
         if (owns_pixels) {
-            free(pixels);
+            sc_screen_recycle_raw_frame_buffer(screen, pixels, size_bytes);
         }
         return false;
     }
@@ -1237,8 +1314,8 @@ sc_screen_init(struct sc_screen *screen,
     screen->raw_frame_event_pending = false;
     screen->raw_frame_source_open = false;
     screen->raw_frame_refresh_timer = 0;
-    screen->raw_upload_pixels = NULL;
-    screen->raw_upload_capacity = 0;
+    memset(screen->raw_frame_buffer_pool, 0, sizeof(screen->raw_frame_buffer_pool));
+    screen->raw_frame_buffer_next = 0;
 
     screen->video = params->video;
     screen->camera = params->camera;
@@ -1544,6 +1621,9 @@ sc_screen_show_initial_window(struct sc_screen *screen) {
         screen->last_resize_request_tick = 0;
         if (screen->initial_display_size.width
                 && screen->initial_display_size.height) {
+            if (screen->tex.texture) {
+                sc_screen_show_prepared_window(screen);
+            }
             return;
         }
     }
@@ -1614,7 +1694,9 @@ sc_screen_destroy(struct sc_screen *screen) {
     }
     sc_screen_raw_frame_clear(screen, true);
     sc_screen_raw_frame_clear(screen, false);
-    free(screen->raw_upload_pixels);
+    for (size_t i = 0; i < SC_RAW_FRAME_BUFFER_POOL_SIZE; ++i) {
+        free(screen->raw_frame_buffer_pool[i].pixels);
+    }
 #ifdef SC_DISPLAY_FORCE_OPENGL_CORE_PROFILE
     SDL_GL_DestroyContext(screen->gl_context);
 #endif
@@ -1825,60 +1907,6 @@ sc_screen_get_raw_frame_crop(struct sc_screen *screen,
 }
 
 static bool
-sc_screen_raw_upload_scratch_ensure(struct sc_screen *screen,
-                                    size_t size) {
-    if (screen->raw_upload_capacity >= size) {
-        return true;
-    }
-
-    uint8_t *pixels = realloc(screen->raw_upload_pixels, size);
-    if (!pixels) {
-        LOG_OOM();
-        return false;
-    }
-    screen->raw_upload_pixels = pixels;
-    screen->raw_upload_capacity = size;
-    return true;
-}
-
-static bool
-sc_screen_scale_raw_frame_nearest(struct sc_screen *screen,
-                                  const uint8_t *src,
-                                  uint32_t src_stride,
-                                  struct sc_size src_size,
-                                  struct sc_size dst_size,
-                                  uint32_t bytes_per_pixel,
-                                  struct sc_raw_frame_view *view) {
-    if (bytes_per_pixel != 4 || !dst_size.width || !dst_size.height) {
-        return false;
-    }
-
-    size_t dst_stride = (size_t) dst_size.width * bytes_per_pixel;
-    size_t dst_size_bytes = dst_stride * dst_size.height;
-    if (!sc_screen_raw_upload_scratch_ensure(screen, dst_size_bytes)) {
-        return false;
-    }
-
-    for (uint32_t y = 0; y < dst_size.height; ++y) {
-        uint32_t src_y = (uint64_t) y * src_size.height / dst_size.height;
-        const uint8_t *src_row = src + (size_t) src_y * src_stride;
-        uint8_t *dst_row = screen->raw_upload_pixels + y * dst_stride;
-        for (uint32_t x = 0; x < dst_size.width; ++x) {
-            uint32_t src_x = (uint64_t) x * src_size.width / dst_size.width;
-            memcpy(dst_row + (size_t) x * bytes_per_pixel,
-                   src_row + (size_t) src_x * bytes_per_pixel,
-                   bytes_per_pixel);
-        }
-    }
-
-    view->size = dst_size;
-    view->pixels = screen->raw_upload_pixels;
-    view->stride = dst_stride;
-    view->offset = 0;
-    return true;
-}
-
-static bool
 sc_screen_get_raw_frame_upload_view(struct sc_screen *screen,
                                     struct sc_raw_frame_view *view) {
     uint32_t bytes_per_pixel = SDL_BYTESPERPIXEL(screen->raw_frame.format);
@@ -1900,21 +1928,6 @@ sc_screen_get_raw_frame_upload_view(struct sc_screen *screen,
         .width = crop.w,
         .height = crop.h,
     };
-    struct sc_size target_size = crop_size;
-    if (screen->flex_display
-            && screen->last_requested_display_size.width
-            && screen->last_requested_display_size.height
-            && screen->last_requested_display_size.width < crop_size.width
-            && screen->last_requested_display_size.height < crop_size.height) {
-        target_size = screen->last_requested_display_size;
-    }
-
-    if (target_size.width != crop_size.width
-            || target_size.height != crop_size.height) {
-        return sc_screen_scale_raw_frame_nearest(
-            screen, pixels, screen->raw_frame.stride, crop_size, target_size,
-            bytes_per_pixel, view);
-    }
 
     view->size = crop_size;
     view->pixels = pixels;
@@ -1947,6 +1960,12 @@ sc_screen_apply_raw_frame(struct sc_screen *screen) {
     struct sc_size new_frame_size = screen->raw_frame.is_dmabuf
                                   ? screen->raw_frame.size
                                   : raw_view.size;
+    if (screen->flex_display
+            && screen->transient_stretch
+            && sc_screen_resize_blur_hold_elapsed(screen, sc_tick_now())) {
+        screen->transient_stretch = false;
+    }
+
     if (screen->frame_size.width != new_frame_size.width
             || screen->frame_size.height != new_frame_size.height) {
         screen->frame_size = new_frame_size;
@@ -2253,6 +2272,22 @@ sc_screen_on_resize_settled(struct sc_screen *screen) {
 
     sc_screen_maybe_request_display_resize(screen, true);
     sc_screen_force_raw_frame_refresh(screen);
+
+    if (screen->transient_stretch) {
+        sc_tick blur_end_tick =
+            screen->last_resize_event_tick
+            + FLEX_DISPLAY_RESIZE_SETTLE_DELAY
+            + FLEX_DISPLAY_POST_RESIZE_BLUR_DELAY;
+        if (screen->last_resize_event_tick && now < blur_end_tick) {
+            sc_tick delay = blur_end_tick - now;
+            Uint32 delay_ms = SC_TICK_TO_MS(delay);
+            sc_screen_schedule_resize_settle_after(screen,
+                                                   delay_ms ? delay_ms : 1);
+        } else {
+            screen->transient_stretch = false;
+        }
+    }
+
     sc_screen_render(screen, true);
 }
 

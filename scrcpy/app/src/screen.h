@@ -29,6 +29,13 @@
 # define SC_DISPLAY_FORCE_OPENGL_CORE_PROFILE
 #endif
 
+#define SC_RAW_FRAME_BUFFER_POOL_SIZE 4
+
+struct sc_raw_frame_buffer {
+    uint8_t *pixels;
+    size_t capacity;
+};
+
 struct sc_screen {
     struct sc_frame_sink frame_sink; // frame sink trait
 
@@ -128,8 +135,9 @@ struct sc_screen {
     bool raw_frame_event_pending; // protected by mutex
     bool raw_frame_source_open;
     SDL_TimerID raw_frame_refresh_timer; // protected by mutex
-    uint8_t *raw_upload_pixels;
-    size_t raw_upload_capacity;
+    struct sc_raw_frame_buffer
+        raw_frame_buffer_pool[SC_RAW_FRAME_BUFFER_POOL_SIZE];
+    size_t raw_frame_buffer_next;
     sc_tick last_raw_frame_render_tick; // protected by mutex
     sc_tick last_raw_frame_resize_tick; // protected by mutex
 
@@ -232,6 +240,13 @@ sc_screen_push_raw_frame(struct sc_screen *screen, uint32_t display_number,
                          SDL_PixelFormat format, uint32_t stride,
                          uint8_t *pixels, size_t size_bytes,
                          bool owns_pixels);
+
+uint8_t *
+sc_screen_alloc_raw_frame_buffer(struct sc_screen *screen, size_t size);
+
+void
+sc_screen_recycle_raw_frame_buffer(struct sc_screen *screen, uint8_t *pixels,
+                                   size_t capacity);
 
 bool
 sc_screen_push_dmabuf_frame(struct sc_screen *screen, uint32_t display_number,

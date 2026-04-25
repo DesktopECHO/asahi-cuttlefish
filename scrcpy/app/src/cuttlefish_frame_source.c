@@ -492,7 +492,9 @@ run_cuttlefish_frame_source(void *data) {
                     continue;
                 }
 
-                uint8_t *payload = malloc(header.payload_size);
+                uint8_t *payload =
+                    sc_screen_alloc_raw_frame_buffer(source->screen,
+                                                     header.payload_size);
                 if (!payload) {
                     LOG_OOM();
                     break;
@@ -510,7 +512,10 @@ run_cuttlefish_frame_source(void *data) {
                                                  frame_payload,
                                                  header.payload_size, true);
                 }
-                free(payload);
+                if (payload) {
+                    sc_screen_recycle_raw_frame_buffer(source->screen, payload,
+                                                       header.payload_size);
+                }
 
                 if (!ok) {
                     break;
@@ -578,7 +583,9 @@ run_cuttlefish_frame_source(void *data) {
                     continue;
                 }
 
-                uint8_t *payload = malloc(header.payload_size);
+                uint8_t *payload =
+                    sc_screen_alloc_raw_frame_buffer(source->screen,
+                                                     header.payload_size);
                 if (!payload) {
                     LOG_OOM();
                     break;
@@ -593,7 +600,10 @@ run_cuttlefish_frame_source(void *data) {
                     source->screen, header.display_number, header.width,
                     header.height, header.fourcc, format, header.stride_bytes,
                     frame_payload, header.payload_size, true);
-                free(payload);
+                if (payload) {
+                    sc_screen_recycle_raw_frame_buffer(source->screen, payload,
+                                                       header.payload_size);
+                }
                 if (!ok) {
                     break;
                 }

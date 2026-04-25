@@ -61,10 +61,44 @@ stop_startup_packaged_scrcpy() {
 }
 
 count_performance_cores() {
+  performance_core_ids | wc -l
+}
+
+performance_core_ids() {
   local max_cap
+  local path
+  local cap
+  local cpu
   max_cap="$(cat /sys/devices/system/cpu/cpu*/cpu_capacity 2>/dev/null | sort -n | tail -1)"
-  [[ -z "${max_cap}" ]] && { echo 0; return; }
-  grep -hxF "${max_cap}" /sys/devices/system/cpu/cpu*/cpu_capacity 2>/dev/null | wc -l
+  if [[ -n "${max_cap}" ]]; then
+    for path in /sys/devices/system/cpu/cpu[0-9]*/cpu_capacity; do
+      [[ -r "${path}" ]] || continue
+      cap="$(<"${path}")"
+      [[ "${cap}" == "${max_cap}" ]] || continue
+      cpu="${path%/cpu_capacity}"
+      cpu="${cpu##*/cpu}"
+      printf '%s\n' "${cpu}"
+    done | sort -n
+    return 0
+  fi
+
+  awk '
+    /^processor[[:space:]]*:/ { proc=$3 }
+    /^CPU part[[:space:]]*:/ {
+      if ($4 == "0x023" || $4 == "0x025" || $4 == "0x029" ||
+          $4 == "0x033" || $4 == "0x035" || $4 == "0x039")
+        print proc
+    }
+  ' /proc/cpuinfo 2>/dev/null | sort -n
+}
+
+reserved_host_core_list() {
+  local -a cores=()
+  local count
+  mapfile -t cores < <(performance_core_ids)
+  count="${#cores[@]}"
+  (( count > 2 )) || return 0
+  printf '%s,%s\n' "${cores[count - 2]}" "${cores[count - 1]}"
 }
 
 default_guest_cpus() {
@@ -655,6 +689,18 @@ launcher_log_contains_message_since_offset() {
   tail -c "+$((effective_offset + 1))" "${launcher_log}" 2>/dev/null | grep -Fq "${message}"
 }
 
+pin_host_frontend_processes() {
+  local host_core_list="$1"
+  local pid
+  [[ -n "${host_core_list}" ]] || return 0
+  command -v taskset >/dev/null 2>&1 || return 0
+
+  while read -r pid; do
+    [[ -n "${pid}" ]] || continue
+    taskset -apc "${host_core_list}" "${pid}" >/dev/null 2>&1 || true
+  done < <(pgrep -u "${UID}" -x webRTC || true)
+}
+
 start_scrcpy_with_retries() {
   local adb_serial="$1"
   local fullscreen_mode="${2:-false}"
@@ -662,6 +708,7 @@ start_scrcpy_with_retries() {
   local max_attempts=5
   local cuttlefish_frames_socket
   local scrcpy_log="${SCRCPY_LOG_FILE}"
+  local host_core_list
   local -a scrcpy_env=()
   local -a scrcpy_cmd=(
     "${SCRCPY_BIN}"
@@ -696,6 +743,13 @@ start_scrcpy_with_retries() {
       "${scrcpy_env[@]}"
       "${scrcpy_cmd[@]}"
     )
+  fi
+
+  host_core_list="$(reserved_host_core_list)"
+  if [[ -n "${host_core_list}" ]] && command -v taskset >/dev/null 2>&1; then
+    log "pinning direct console to host performance cores: ${host_core_list}"
+    pin_host_frontend_processes "${host_core_list}"
+    scrcpy_cmd=(taskset -c "${host_core_list}" "${scrcpy_cmd[@]}")
   fi
 
   mkdir -p "$(dirname "${scrcpy_log}")"
