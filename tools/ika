@@ -67,6 +67,23 @@ count_performance_cores() {
   grep -hxF "${max_cap}" /sys/devices/system/cpu/cpu*/cpu_capacity 2>/dev/null | wc -l
 }
 
+default_guest_cpus() {
+  local perf_cores
+  perf_cores="$(count_performance_cores)"
+  perf_cores="${perf_cores//[!0-9]/}"
+
+  if [[ -z "${perf_cores}" ]] || (( perf_cores <= 0 )); then
+    echo 2
+    return
+  fi
+
+  if (( perf_cores > 2 )); then
+    echo $((perf_cores - 2))
+  else
+    echo 1
+  fi
+}
+
 
 
 # ============================================================================
@@ -75,7 +92,9 @@ count_performance_cores() {
 declare -A CVD_GPU_DEFAULTS=(
   [gpu_mode]="gfxstream"
   [gpu_vhost_user_mode]="off"
-  [enable_gpu_udmabuf]="true"
+  # The Asahi crosvm/gfxstream path currently logs repeated ResourceMapBlob
+  # failures with udmabuf enabled, so keep it opt-in until that path works.
+  [enable_gpu_udmabuf]="false"
   [use_cvdalloc]="true"
 )
 
@@ -96,7 +115,7 @@ declare -A CVD_NETWORK_DEFAULTS=(
 # Compute Configuration Defaults (passed to cvd_internal_start)
 # ============================================================================
 declare -A CVD_COMPUTE_DEFAULTS=(
-  [cpus]="$(count_performance_cores)"
+  [cpus]="$(default_guest_cpus)"
   [memory_mb]="4096"
   [prefer_performance_cores]="true"
   [enable_bootanimation]="false"
@@ -118,6 +137,13 @@ declare -A CVD_BOOT_DEFAULTS=(
 )
 
 # ============================================================================
+# Launcher Lifecycle Defaults (passed to cvd_internal_start)
+# ============================================================================
+declare -A CVD_LAUNCHER_DEFAULTS=(
+  [daemon]="true"
+)
+
+# ============================================================================
 # Overlay Configuration Defaults (internal use only)
 # ============================================================================
 declare -A CVD_OVERLAY_DEFAULTS=(
@@ -131,6 +157,7 @@ CVD_DEFAULT_ARG_MAPS=(
   CVD_NETWORK_DEFAULTS
   CVD_REPORT_DEFAULTS
   CVD_OVERLAY_DEFAULTS
+  CVD_LAUNCHER_DEFAULTS
 )
 
 # Convenience variables
@@ -146,13 +173,13 @@ CVD_GPU_MODE="${CVD_GPU_DEFAULTS[gpu_mode]}"
 : "${CVD_HOME_DIR:=${HOME}/ika}"
 mkdir -p "${CVD_HOME_DIR}"
 START_LOG_FILE="${CVD_HOME_DIR}/ikastart.log"
+SCRCPY_LOG_FILE="${CVD_HOME_DIR}/scrcpy.log"
 CVD_BIN="${CVD_HOST_OUT}/bin/cvd_internal_start"
 CVD_CLI_BIN="${CVD_HOST_OUT}/bin/cvd"
 CVD_STOP_BIN="${CVD_HOST_OUT}/bin/cvd_internal_stop"
 CVD_INSTANCE_DIR="${CVD_HOME_DIR}/cuttlefish/instances/cvd-1"
 CVD_LAUNCHER_LOG="${CVD_INSTANCE_DIR}/logs/launcher.log"
 CVD_CONFIG_PATH="${CVD_INSTANCE_DIR}/cuttlefish_config.json"
-SCRCPY_CUTTLEFISH_FRAMES_SOCKET="${CVD_INSTANCE_DIR}/internal/ika_frames.sock"
 SCRCPY_BIN="${PACKAGED_SCRCPY_BIN}"
 SCRCPY_SERVER_PATH_OVERRIDE=""
 if [[ -f "${PACKAGED_SCRCPY_SERVER}" ]]; then
@@ -510,6 +537,23 @@ resolve_adb_serial() {
   printf '0.0.0.0:6520\n'
 }
 
+resolve_cuttlefish_frames_socket() {
+  local frame_sock_path=""
+  local socket_path
+
+  if [[ -f "${CVD_CONFIG_PATH}" ]]; then
+    frame_sock_path="$(grep -oE '"frame_sock_path"[[:space:]]*:[[:space:]]*"[^"]+"' "${CVD_CONFIG_PATH}" | head -n1 | sed -E 's/.*"([^"]+)"$/\1/' || true)"
+  fi
+
+  if [[ -n "${frame_sock_path}" ]]; then
+    socket_path="$(dirname "${frame_sock_path}")/ika_frames.sock"
+  else
+    socket_path="/tmp/cf_avd_${UID}/cvd-1/internal/ika_frames.sock"
+  fi
+
+  printf '%s\n' "${socket_path}"
+}
+
 has_live_cvd_processes() {
   pgrep -f "${CVD_PROCESS_REGEX}" >/dev/null 2>&1
 }
@@ -616,17 +660,21 @@ start_scrcpy_with_retries() {
   local fullscreen_mode="${2:-false}"
   local attempt=1
   local max_attempts=5
+  local cuttlefish_frames_socket
+  local scrcpy_log="${SCRCPY_LOG_FILE}"
   local -a scrcpy_env=()
   local -a scrcpy_cmd=(
     "${SCRCPY_BIN}"
     -s "${adb_serial}"
   )
+  cuttlefish_frames_socket="$(resolve_cuttlefish_frames_socket)"
   if [[ -n "${SCRCPY_DPI_FLAG}" ]]; then
     scrcpy_cmd+=("${SCRCPY_DPI_FLAG}")
   fi
   scrcpy_cmd+=(
     --force-adb-forward
-    --cuttlefish-frames-socket="${SCRCPY_CUTTLEFISH_FRAMES_SOCKET}"
+    --cuttlefish-frames-socket="${cuttlefish_frames_socket}"
+    --render-driver=opengl
     --window-borderless
     --video-bit-rate=36M
     --audio-buffer=80
@@ -650,12 +698,15 @@ start_scrcpy_with_retries() {
     )
   fi
 
+  mkdir -p "$(dirname "${scrcpy_log}")"
+  : > "${scrcpy_log}"
+
   while [[ "${attempt}" -le "${max_attempts}" ]]; do
     log "starting scrcpy for ${adb_serial} (attempt ${attempt})"
     if [[ "${fullscreen_mode}" == "true" ]]; then
-      "${scrcpy_cmd[@]}" --fullscreen >/dev/null 2>&1 &
+      setsid --fork "${scrcpy_cmd[@]}" --fullscreen </dev/null >>"${scrcpy_log}" 2>&1 &
     else
-      "${scrcpy_cmd[@]}" >/dev/null 2>&1 &
+      setsid --fork "${scrcpy_cmd[@]}" </dev/null >>"${scrcpy_log}" 2>&1 &
     fi
     disown || true
 
@@ -759,7 +810,7 @@ start_cvd() {
     log "Cuttlefish is already running under ${CVD_HOME_DIR}"
     respond_console "Instance already running, restarting console viewer."
     respond "Android virtual device running"
-    maybe_start_scrcpy "${adb_serial}" "${launcher_log}" "${fullscreen_mode}" "0" || true
+    start_scrcpy_with_retries "${adb_serial}" "${fullscreen_mode}" || true
     return 0
   fi
 

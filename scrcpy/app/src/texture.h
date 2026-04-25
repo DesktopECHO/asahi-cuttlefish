@@ -14,7 +14,28 @@
 enum sc_texture_type {
     SC_TEXTURE_TYPE_FRAME,
     SC_TEXTURE_TYPE_RAW_FRAME,
+    SC_TEXTURE_TYPE_DMABUF_FRAME,
     SC_TEXTURE_TYPE_ICON,
+};
+
+#define SC_DMABUF_TEXTURE_CACHE_SIZE 8
+
+struct sc_dmabuf_texture_cache_entry {
+    bool used;
+    uint64_t last_used;
+    uint64_t dev;
+    uint64_t ino;
+    struct sc_size size;
+    uint32_t fourcc;
+    SDL_PixelFormat format;
+    uint32_t offset;
+    uint32_t stride;
+    uint32_t modifier_hi;
+    uint32_t modifier_lo;
+    uint32_t gl_texture;
+    void *egl_image;
+    void *egl_display;
+    SDL_Texture *texture;
 };
 
 struct sc_texture {
@@ -29,6 +50,14 @@ struct sc_texture {
 
     bool mipmaps;
     uint32_t texture_id; // only set if mipmaps is enabled
+    uint32_t raw_texture_id;
+    uint32_t raw_pbo_ids[3];
+    uint32_t raw_pbo_index;
+    bool raw_pbo_supported;
+    bool raw_pbo_enabled;
+    struct sc_dmabuf_texture_cache_entry
+        dmabuf_cache[SC_DMABUF_TEXTURE_CACHE_SIZE];
+    uint64_t dmabuf_cache_generation;
 };
 
 bool
@@ -44,6 +73,13 @@ bool
 sc_texture_set_from_raw_frame(struct sc_texture *tex, struct sc_size size,
                               SDL_PixelFormat format, const uint8_t *pixels,
                               uint32_t stride);
+
+bool
+sc_texture_set_from_dmabuf_frame(struct sc_texture *tex, struct sc_size size,
+                                 uint32_t fourcc, SDL_PixelFormat format,
+                                 int dmabuf_fd, uint32_t offset,
+                                 uint32_t stride, uint32_t modifier_hi,
+                                 uint32_t modifier_lo);
 
 bool
 sc_texture_set_from_surface(struct sc_texture *tex, SDL_Surface *surface);

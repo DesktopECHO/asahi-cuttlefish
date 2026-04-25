@@ -77,6 +77,9 @@ struct sc_screen {
     // Deduplicate resize requests while dpi-driven resizing is active.
     struct sc_size last_requested_display_size;
     sc_tick last_resize_request_tick;
+    bool initial_window_show_deferred;
+    struct sc_size initial_display_size;
+    sc_tick initial_window_prepare_tick;
     bool transient_stretch;
     sc_tick last_resize_event_tick;
     bool hotspot_button_down;
@@ -113,9 +116,21 @@ struct sc_screen {
         uint32_t stride;
         uint8_t *pixels;
         size_t size_bytes;
+        int dmabuf_fd;
+        uint32_t offset;
+        uint32_t modifier_hi;
+        uint32_t modifier_lo;
+        bool is_dmabuf;
+        bool owns_pixels;
     } pending_raw_frame, raw_frame;
     bool pending_raw_frame_available; // protected by mutex
+    bool raw_frame_event_pending; // protected by mutex
     bool raw_frame_source_open;
+    SDL_TimerID raw_frame_refresh_timer; // protected by mutex
+    uint8_t *raw_upload_pixels;
+    size_t raw_upload_capacity;
+    sc_tick last_raw_frame_render_tick; // protected by mutex
+    sc_tick last_raw_frame_resize_tick; // protected by mutex
 
     bool paused;
     AVFrame *resume_frame;
@@ -214,7 +229,15 @@ bool
 sc_screen_push_raw_frame(struct sc_screen *screen, uint32_t display_number,
                          uint32_t width, uint32_t height, uint32_t fourcc,
                          SDL_PixelFormat format, uint32_t stride,
-                         const uint8_t *pixels, size_t size_bytes);
+                         uint8_t *pixels, size_t size_bytes,
+                         bool owns_pixels);
+
+bool
+sc_screen_push_dmabuf_frame(struct sc_screen *screen, uint32_t display_number,
+                            uint32_t width, uint32_t height, uint32_t fourcc,
+                            SDL_PixelFormat format, int dmabuf_fd,
+                            uint32_t offset, uint32_t stride,
+                            uint32_t modifier_hi, uint32_t modifier_lo);
 
 void
 sc_screen_close_raw_frame_source(struct sc_screen *screen);
@@ -237,6 +260,17 @@ sc_screen_convert_window_to_frame_coords(struct sc_screen *screen,
 // x and y are expressed in pixels
 struct sc_point
 sc_screen_convert_drawable_to_frame_coords(struct sc_screen *screen,
+                                          int32_t x, int32_t y);
+
+struct sc_size
+sc_screen_get_input_size(struct sc_screen *screen);
+
+struct sc_point
+sc_screen_convert_window_to_input_coords(struct sc_screen *screen,
+                                        int32_t x, int32_t y);
+
+struct sc_point
+sc_screen_convert_drawable_to_input_coords(struct sc_screen *screen,
                                           int32_t x, int32_t y);
 
 // Convert coordinates from window to drawable.

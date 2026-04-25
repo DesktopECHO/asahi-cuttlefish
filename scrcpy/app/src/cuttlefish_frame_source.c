@@ -11,6 +11,7 @@
 #include "util/log.h"
 
 #ifndef _WIN32
+# include <sys/mman.h>
 # include <sys/socket.h>
 # include <sys/un.h>
 # include <unistd.h>
@@ -18,6 +19,11 @@
 
 #define SC_CUTTLEFISH_FRAME_MAGIC 0x46414b49u
 #define SC_CUTTLEFISH_FRAME_VERSION 1
+#define SC_CUTTLEFISH_DMABUF_FRAME_MAGIC 0x44414b49u
+#define SC_CUTTLEFISH_DMABUF_FRAME_VERSION 1
+#define SC_CUTTLEFISH_SHM_INIT_MAGIC 0x53414b49u
+#define SC_CUTTLEFISH_SHM_NOTIFY_MAGIC 0x4e414b49u
+#define SC_CUTTLEFISH_SHM_FRAME_VERSION 1
 #define SC_CUTTLEFISH_FRAME_MAX_PAYLOAD (256u * 1024u * 1024u)
 
 #define SC_FOURCC(a, b, c, d) \
@@ -42,6 +48,43 @@ struct sc_cuttlefish_raw_frame_header {
     uint32_t fourcc;
     uint32_t stride_bytes;
     uint32_t payload_size;
+};
+
+struct sc_cuttlefish_dmabuf_frame_header {
+    uint32_t magic;
+    uint32_t version;
+    uint32_t display_number;
+    uint32_t width;
+    uint32_t height;
+    uint32_t fourcc;
+    uint32_t offset;
+    uint32_t stride_bytes;
+    uint32_t modifier_hi;
+    uint32_t modifier_lo;
+};
+
+struct sc_cuttlefish_shm_init_header {
+    uint32_t magic;
+    uint32_t version;
+    uint32_t slot_count;
+    uint32_t slot_size;
+};
+
+struct sc_cuttlefish_shm_notify_header {
+    uint32_t magic;
+    uint32_t version;
+    uint32_t display_number;
+    uint32_t width;
+    uint32_t height;
+    uint32_t fourcc;
+    uint32_t stride_bytes;
+    uint32_t payload_size;
+    uint32_t slot_index;
+};
+
+struct sc_cuttlefish_frame_common_header {
+    uint32_t magic;
+    uint32_t version;
 };
 
 static char *
@@ -107,6 +150,47 @@ sc_cuttlefish_fourcc_to_sdl_format(uint32_t fourcc) {
 
 #ifndef _WIN32
 static bool
+sc_recv_common_header(int fd, struct sc_cuttlefish_frame_common_header *header,
+                      int *received_fd) {
+    *received_fd = -1;
+
+    struct iovec iov = {
+        .iov_base = header,
+        .iov_len = sizeof(*header),
+    };
+    char control[CMSG_SPACE(sizeof(int))];
+    memset(control, 0, sizeof(control));
+
+    struct msghdr msg;
+    memset(&msg, 0, sizeof(msg));
+    msg.msg_iov = &iov;
+    msg.msg_iovlen = 1;
+    msg.msg_control = control;
+    msg.msg_controllen = sizeof(control);
+
+    ssize_t r;
+    do {
+        r = recvmsg(fd, &msg, MSG_WAITALL);
+    } while (r < 0 && errno == EINTR);
+
+    if (r != (ssize_t) sizeof(*header)) {
+        return false;
+    }
+
+    for (struct cmsghdr *cmsg = CMSG_FIRSTHDR(&msg); cmsg;
+            cmsg = CMSG_NXTHDR(&msg, cmsg)) {
+        if (cmsg->cmsg_level == SOL_SOCKET
+                && cmsg->cmsg_type == SCM_RIGHTS
+                && cmsg->cmsg_len >= CMSG_LEN(sizeof(int))) {
+            memcpy(received_fd, CMSG_DATA(cmsg), sizeof(int));
+            break;
+        }
+    }
+
+    return true;
+}
+
+static bool
 sc_read_all(int fd, void *buf, size_t size) {
     char *ptr = buf;
     while (size) {
@@ -127,6 +211,15 @@ sc_read_all(int fd, void *buf, size_t size) {
 }
 
 static bool
+sc_read_remaining_header(int fd, void *header, size_t header_size) {
+    assert(header_size >= sizeof(struct sc_cuttlefish_frame_common_header));
+    char *ptr = header;
+    return sc_read_all(fd, ptr + sizeof(struct sc_cuttlefish_frame_common_header),
+                       header_size
+                           - sizeof(struct sc_cuttlefish_frame_common_header));
+}
+
+static bool
 sc_discard_all(int fd, size_t size) {
     char buf[4096];
     while (size) {
@@ -135,6 +228,149 @@ sc_discard_all(int fd, size_t size) {
             return false;
         }
         size -= count;
+    }
+    return true;
+}
+
+static void
+sc_cuttlefish_frame_source_unmap_shm(
+        struct sc_cuttlefish_frame_source *source) {
+    if (source->shm_data) {
+        munmap(source->shm_data, source->shm_size);
+        source->shm_data = NULL;
+    }
+    source->shm_size = 0;
+    source->shm_slot_count = 0;
+    source->shm_slot_size = 0;
+}
+
+static bool
+sc_cuttlefish_handle_shm_init(struct sc_cuttlefish_frame_source *source,
+                              int fd,
+                              const struct sc_cuttlefish_frame_common_header *c,
+                              int received_fd) {
+    struct sc_cuttlefish_shm_init_header header;
+    memcpy(&header, c, sizeof(*c));
+    if (!sc_read_remaining_header(fd, &header, sizeof(header))) {
+        if (received_fd >= 0) {
+            close(received_fd);
+        }
+        return false;
+    }
+
+    if (header.magic != SC_CUTTLEFISH_SHM_INIT_MAGIC
+            || header.version != SC_CUTTLEFISH_SHM_FRAME_VERSION
+            || !header.slot_count || header.slot_count > 16
+            || !header.slot_size
+            || header.slot_size > SC_CUTTLEFISH_FRAME_MAX_PAYLOAD
+            || received_fd < 0) {
+        LOGE("Invalid Cuttlefish shared raw frame setup");
+        if (received_fd >= 0) {
+            close(received_fd);
+        }
+        return false;
+    }
+
+    size_t shm_size = (size_t) header.slot_count * header.slot_size;
+    if (shm_size / header.slot_count != header.slot_size) {
+        LOGE("Invalid Cuttlefish shared raw frame size");
+        close(received_fd);
+        return false;
+    }
+
+    uint8_t *data = mmap(NULL, shm_size, PROT_READ, MAP_SHARED, received_fd, 0);
+    close(received_fd);
+    if (data == MAP_FAILED) {
+        LOGE("Could not map Cuttlefish raw frame shared memory: %s",
+             strerror(errno));
+        return false;
+    }
+
+    sc_cuttlefish_frame_source_unmap_shm(source);
+    source->shm_data = data;
+    source->shm_size = shm_size;
+    source->shm_slot_count = header.slot_count;
+    source->shm_slot_size = header.slot_size;
+
+    LOGI("Using Cuttlefish shared raw frame slots: %" PRIu32 " x %" PRIu32,
+         header.slot_count, header.slot_size);
+    return true;
+}
+
+static bool
+sc_cuttlefish_validate_dmabuf_frame(
+        const struct sc_cuttlefish_dmabuf_frame_header *h,
+        SDL_PixelFormat format, int dmabuf_fd) {
+    if (h->magic != SC_CUTTLEFISH_DMABUF_FRAME_MAGIC
+            || h->version != SC_CUTTLEFISH_DMABUF_FRAME_VERSION) {
+        LOGE("Invalid Cuttlefish DMA-BUF frame stream header");
+        return false;
+    }
+    if (!h->width || h->width > 0xffff || !h->height || h->height > 0xffff
+            || !h->stride_bytes || dmabuf_fd < 0) {
+        LOGE("Invalid Cuttlefish DMA-BUF frame dimensions");
+        return false;
+    }
+    if (format == SDL_PIXELFORMAT_UNKNOWN) {
+        char fourcc[5];
+        LOGE("Unsupported Cuttlefish DMA-BUF frame format: %s",
+             sc_fourcc_to_string(h->fourcc, fourcc));
+        return false;
+    }
+
+    uint32_t bpp = SDL_BYTESPERPIXEL(format);
+    if (!bpp || h->width > UINT32_MAX / bpp) {
+        LOGE("Invalid Cuttlefish DMA-BUF frame pixel format");
+        return false;
+    }
+    uint32_t min_stride = h->width * bpp;
+    if (h->stride_bytes < min_stride) {
+        LOGE("Invalid Cuttlefish DMA-BUF frame stride");
+        return false;
+    }
+    return true;
+}
+
+static bool
+sc_cuttlefish_validate_shm_frame(
+        const struct sc_cuttlefish_frame_source *source,
+        const struct sc_cuttlefish_shm_notify_header *h,
+        SDL_PixelFormat format) {
+    if (h->magic != SC_CUTTLEFISH_SHM_NOTIFY_MAGIC
+            || h->version != SC_CUTTLEFISH_SHM_FRAME_VERSION) {
+        LOGE("Invalid Cuttlefish shared raw frame header");
+        return false;
+    }
+    if (!source->shm_data || !source->shm_slot_count || !source->shm_slot_size
+            || h->slot_index >= source->shm_slot_count
+            || !h->width || h->width > 0xffff
+            || !h->height || h->height > 0xffff
+            || !h->stride_bytes || !h->payload_size
+            || h->payload_size > source->shm_slot_size) {
+        LOGE("Invalid Cuttlefish shared raw frame dimensions");
+        return false;
+    }
+    if (format == SDL_PIXELFORMAT_UNKNOWN) {
+        char fourcc[5];
+        LOGE("Unsupported Cuttlefish shared raw frame format: %s",
+             sc_fourcc_to_string(h->fourcc, fourcc));
+        return false;
+    }
+
+    uint32_t bpp = SDL_BYTESPERPIXEL(format);
+    if (!bpp || h->width > UINT32_MAX / bpp) {
+        LOGE("Invalid Cuttlefish shared raw frame pixel format");
+        return false;
+    }
+    uint32_t min_stride = h->width * bpp;
+    if (h->stride_bytes < min_stride) {
+        LOGE("Invalid Cuttlefish shared raw frame stride");
+        return false;
+    }
+    if (h->height > UINT32_MAX / h->stride_bytes
+            || h->payload_size < h->height * h->stride_bytes) {
+        LOGE("Invalid Cuttlefish shared raw frame payload size");
+        return false;
     }
     return true;
 }
@@ -225,48 +461,154 @@ run_cuttlefish_frame_source(void *data) {
         LOGI("Connected to Cuttlefish frame socket %s", source->socket_path);
 
         while (!sc_cuttlefish_frame_source_is_stopped(source)) {
-            struct sc_cuttlefish_raw_frame_header header;
-            if (!sc_read_all(fd, &header, sizeof(header))) {
+            struct sc_cuttlefish_frame_common_header common_header;
+            int received_fd;
+            if (!sc_recv_common_header(fd, &common_header, &received_fd)) {
                 break;
             }
 
-            SDL_PixelFormat format =
-                sc_cuttlefish_fourcc_to_sdl_format(header.fourcc);
-            if (!sc_cuttlefish_validate_frame(&header, format)) {
-                break;
-            }
+            if (common_header.magic == SC_CUTTLEFISH_FRAME_MAGIC) {
+                if (received_fd >= 0) {
+                    close(received_fd);
+                    received_fd = -1;
+                }
 
-            if (header.display_number != source->display_id) {
-                if (!sc_discard_all(fd, header.payload_size)) {
+                struct sc_cuttlefish_raw_frame_header header;
+                memcpy(&header, &common_header, sizeof(common_header));
+                if (!sc_read_remaining_header(fd, &header, sizeof(header))) {
                     break;
                 }
-                continue;
-            }
 
-            uint8_t *payload = malloc(header.payload_size);
-            if (!payload) {
-                LOG_OOM();
-                break;
-            }
+                SDL_PixelFormat format =
+                    sc_cuttlefish_fourcc_to_sdl_format(header.fourcc);
+                if (!sc_cuttlefish_validate_frame(&header, format)) {
+                    break;
+                }
 
-            bool ok = sc_read_all(fd, payload, header.payload_size);
-            if (ok) {
-                ok = sc_screen_push_raw_frame(source->screen,
-                                             header.display_number,
-                                             header.width, header.height,
-                                             header.fourcc, format,
-                                             header.stride_bytes, payload,
-                                             header.payload_size);
-            }
-            free(payload);
+                if (header.display_number != source->display_id) {
+                    if (!sc_discard_all(fd, header.payload_size)) {
+                        break;
+                    }
+                    continue;
+                }
 
-            if (!ok) {
+                uint8_t *payload = malloc(header.payload_size);
+                if (!payload) {
+                    LOG_OOM();
+                    break;
+                }
+
+                bool ok = sc_read_all(fd, payload, header.payload_size);
+                if (ok) {
+                    uint8_t *frame_payload = payload;
+                    payload = NULL;
+                    ok = sc_screen_push_raw_frame(source->screen,
+                                                 header.display_number,
+                                                 header.width, header.height,
+                                                 header.fourcc, format,
+                                                 header.stride_bytes,
+                                                 frame_payload,
+                                                 header.payload_size, true);
+                }
+                free(payload);
+
+                if (!ok) {
+                    break;
+                }
+            } else if (common_header.magic == SC_CUTTLEFISH_DMABUF_FRAME_MAGIC) {
+                struct sc_cuttlefish_dmabuf_frame_header header;
+                memcpy(&header, &common_header, sizeof(common_header));
+                if (!sc_read_remaining_header(fd, &header, sizeof(header))) {
+                    if (received_fd >= 0) {
+                        close(received_fd);
+                    }
+                    break;
+                }
+
+                SDL_PixelFormat format =
+                    sc_cuttlefish_fourcc_to_sdl_format(header.fourcc);
+                if (!sc_cuttlefish_validate_dmabuf_frame(&header, format,
+                                                         received_fd)) {
+                    if (received_fd >= 0) {
+                        close(received_fd);
+                    }
+                    break;
+                }
+
+                if (header.display_number != source->display_id) {
+                    close(received_fd);
+                    continue;
+                }
+
+                int frame_fd = received_fd;
+                received_fd = -1;
+                bool ok = sc_screen_push_dmabuf_frame(
+                    source->screen, header.display_number, header.width,
+                    header.height, header.fourcc, format, frame_fd,
+                    header.offset, header.stride_bytes, header.modifier_hi,
+                    header.modifier_lo);
+                if (!ok) {
+                    break;
+                }
+            } else if (common_header.magic == SC_CUTTLEFISH_SHM_INIT_MAGIC) {
+                if (!sc_cuttlefish_handle_shm_init(source, fd, &common_header,
+                                                   received_fd)) {
+                    break;
+                }
+            } else if (common_header.magic == SC_CUTTLEFISH_SHM_NOTIFY_MAGIC) {
+                if (received_fd >= 0) {
+                    close(received_fd);
+                    received_fd = -1;
+                }
+
+                struct sc_cuttlefish_shm_notify_header header;
+                memcpy(&header, &common_header, sizeof(common_header));
+                if (!sc_read_remaining_header(fd, &header, sizeof(header))) {
+                    break;
+                }
+
+                SDL_PixelFormat format =
+                    sc_cuttlefish_fourcc_to_sdl_format(header.fourcc);
+                if (!sc_cuttlefish_validate_shm_frame(source, &header,
+                                                      format)) {
+                    break;
+                }
+
+                if (header.display_number != source->display_id) {
+                    continue;
+                }
+
+                uint8_t *payload = malloc(header.payload_size);
+                if (!payload) {
+                    LOG_OOM();
+                    break;
+                }
+                memcpy(payload,
+                       source->shm_data
+                       + (size_t) header.slot_index * source->shm_slot_size,
+                       header.payload_size);
+                uint8_t *frame_payload = payload;
+                payload = NULL;
+                bool ok = sc_screen_push_raw_frame(
+                    source->screen, header.display_number, header.width,
+                    header.height, header.fourcc, format, header.stride_bytes,
+                    frame_payload, header.payload_size, true);
+                free(payload);
+                if (!ok) {
+                    break;
+                }
+            } else {
+                if (received_fd >= 0) {
+                    close(received_fd);
+                }
+                LOGE("Invalid Cuttlefish frame stream header");
                 break;
             }
         }
 
         sc_cuttlefish_frame_source_set_socket(source, -1);
         close(fd);
+        sc_cuttlefish_frame_source_unmap_shm(source);
 
         if (!sc_cuttlefish_frame_source_is_stopped(source)) {
             LOGW("Cuttlefish frame socket disconnected; reconnecting");
@@ -307,6 +649,10 @@ sc_cuttlefish_frame_source_init(struct sc_cuttlefish_frame_source *source,
     source->socket_fd = -1;
     source->display_id = display_id;
     source->screen = screen;
+    source->shm_data = NULL;
+    source->shm_size = 0;
+    source->shm_slot_count = 0;
+    source->shm_slot_size = 0;
     return true;
 }
 
@@ -335,6 +681,9 @@ sc_cuttlefish_frame_source_join(struct sc_cuttlefish_frame_source *source) {
 
 void
 sc_cuttlefish_frame_source_destroy(struct sc_cuttlefish_frame_source *source) {
+#ifndef _WIN32
+    sc_cuttlefish_frame_source_unmap_shm(source);
+#endif
     free(source->socket_path);
     sc_mutex_destroy(&source->mutex);
 }

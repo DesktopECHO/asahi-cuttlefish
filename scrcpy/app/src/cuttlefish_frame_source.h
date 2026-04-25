@@ -4,6 +4,7 @@
 #include "common.h"
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 #include "screen.h"
@@ -17,6 +18,10 @@ struct sc_cuttlefish_frame_source {
     char *socket_path;
     uint32_t display_id;
     struct sc_screen *screen;
+    uint8_t *shm_data;
+    size_t shm_size;
+    uint32_t shm_slot_count;
+    uint32_t shm_slot_size;
 };
 
 bool

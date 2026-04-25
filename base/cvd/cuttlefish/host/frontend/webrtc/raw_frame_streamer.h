@@ -19,7 +19,9 @@
 #include <stdint.h>
 
 #include <condition_variable>
+#include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <thread>
 #include <vector>
@@ -47,16 +49,47 @@ class RawFrameStreamer {
 
   void OnFrame(uint32_t display_number, uint32_t width, uint32_t height,
                uint32_t fourcc, uint32_t stride_bytes, const uint8_t* pixels);
+  bool OnDmabufFrame(uint32_t display_number, uint32_t width, uint32_t height,
+                     uint32_t fourcc, int dmabuf_fd, uint32_t offset,
+                     uint32_t stride_bytes, uint32_t modifier_hi,
+                     uint32_t modifier_lo);
 
  private:
+  enum class FrameType {
+    kNone,
+    kRaw,
+    kDmabuf,
+  };
+
   struct Frame {
+    FrameType type = FrameType::kNone;
     RawFrameHeader header = {};
-    std::vector<uint8_t> pixels;
+    std::shared_ptr<const std::vector<uint8_t>> pixels;
+    int dmabuf_fd = -1;
+    uint32_t offset = 0;
+    uint32_t modifier_hi = 0;
+    uint32_t modifier_lo = 0;
+  };
+
+  struct ClientShm {
+    int fd = -1;
+    uint8_t* data = nullptr;
+    size_t slot_size = 0;
+    uint32_t slot_count = 4;
+    uint32_t next_slot = 0;
   };
 
   void ServerLoop();
   void ClientLoop(int client_fd);
   bool SendAll(int fd, const void* data, size_t size);
+  bool SendDmabufFrame(int fd, const Frame& frame);
+  bool SendRawFrame(int fd, const Frame& frame, ClientShm& shm);
+  bool SendShmInit(int fd, ClientShm& shm, size_t payload_size);
+  bool SendShmFrame(int fd, const Frame& frame, ClientShm& shm);
+  void CloseClientShm(ClientShm& shm) const;
+  Frame CopyLatestFrameLocked() const;
+  void CloseFrameFd(Frame& frame) const;
+  std::shared_ptr<std::vector<uint8_t>> AcquireRawBufferLocked(size_t size);
 
   std::string socket_path_;
   std::thread server_thread_;
@@ -66,7 +99,10 @@ class RawFrameStreamer {
   std::condition_variable frame_cv_;
   bool stopped_ = false;
   uint64_t generation_ = 0;
+  std::optional<uint32_t> suppress_next_raw_display_;
   Frame latest_frame_;
+  std::vector<std::shared_ptr<std::vector<uint8_t>>> raw_buffers_;
+  size_t next_raw_buffer_ = 0;
 };
 
 }  // namespace cuttlefish

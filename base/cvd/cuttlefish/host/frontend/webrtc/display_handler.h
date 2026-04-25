@@ -90,6 +90,7 @@ class DisplayHandler {
   GenerateProcessedFrameCallback GetScreenConnectorCallback();
   void SendBuffers(std::map<uint32_t, std::shared_ptr<BufferInfo>> buffers);
   void RepeatFramesPeriodically();
+  bool HasActiveDisplayClients();
 
   std::optional<std::unique_ptr<CompositionManager>> composition_manager_;
   std::map<uint32_t, std::shared_ptr<webrtc_streaming::VideoSink>>

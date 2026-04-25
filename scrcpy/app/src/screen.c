@@ -3,6 +3,9 @@
 #include <assert.h>
 #include <stdlib.h>
 #include <string.h>
+#ifndef _WIN32
+# include <unistd.h>
+#endif
 #include <SDL3/SDL.h>
 
 #include "events.h"
@@ -16,6 +19,9 @@
 #define FLEX_DISPLAY_STRETCH_EVENT_DELAY SC_TICK_FROM_MS(250)
 #define FLEX_DISPLAY_STRETCH_PENDING_MAX SC_TICK_FROM_MS(1000)
 #define FLEX_DISPLAY_SIZE_MATCH_TOLERANCE 16
+#define FLEX_DISPLAY_INITIAL_SHOW_MAX_DELAY SC_TICK_FROM_MS(350)
+#define RAW_FRAME_RESIZE_STILL_DELAY SC_TICK_FROM_MS(1000)
+#define RAW_FRAME_RESIZE_ACTIVE_MIN_INTERVAL SC_TICK_FROM_MS(33)
 #define SC_WINDOW_MIN_WIDTH 360
 #define SC_WINDOW_MIN_HEIGHT 480
 #define SC_WINDOW_RESIZE_BORDER 12
@@ -400,16 +406,77 @@ sc_screen_update_content_rect(struct sc_screen *screen) {
 }
 
 static void
-sc_screen_maybe_request_display_resize(struct sc_screen *screen);
+sc_screen_maybe_request_display_resize(struct sc_screen *screen, bool force);
+static void
+sc_screen_note_raw_frame_resize_activity(struct sc_screen *screen);
+static void
+sc_screen_show_prepared_window(struct sc_screen *screen);
+static Uint32 SDLCALL
+sc_screen_raw_frame_refresh_timer(void *userdata, SDL_TimerID timerID,
+                                  Uint32 interval);
+static void
+sc_screen_schedule_raw_frame_refresh_locked(struct sc_screen *screen,
+                                            sc_tick now);
+static SDL_TimerID
+sc_screen_take_raw_frame_refresh_timer_locked(struct sc_screen *screen);
+
+static bool
+sc_screen_should_hold_resize_preview(struct sc_screen *screen) {
+    if (!screen->window_shown
+            || !screen->flex_display
+            || !screen->transient_stretch
+            || !screen->tex.texture) {
+        return false;
+    }
+
+    sc_tick now = sc_tick_now();
+    bool recent_resize_event = screen->last_resize_event_tick
+            && now - screen->last_resize_event_tick
+                    < FLEX_DISPLAY_STRETCH_EVENT_DELAY;
+    bool pending_resize_apply = screen->last_resize_request_tick
+            && now - screen->last_resize_request_tick
+                    < FLEX_DISPLAY_STRETCH_PENDING_MAX;
+
+    return recent_resize_event || pending_resize_apply;
+}
 
 static bool
 sc_screen_render_texture(struct sc_screen *screen, const SDL_FRect *geometry) {
     SDL_Renderer *renderer = screen->renderer;
     SDL_Texture *texture = screen->tex.texture;
     enum sc_orientation orientation = screen->orientation;
+    SDL_FRect srcrect;
+    const SDL_FRect *src = NULL;
+
+    if (!screen->transient_stretch
+            && screen->raw_frame_source_open
+            && screen->flex_display
+            && screen->last_requested_display_size.width
+            && screen->last_requested_display_size.height
+            && screen->frame_size.width
+            && screen->frame_size.height) {
+        float frame_ar =
+            (float) screen->frame_size.width / screen->frame_size.height;
+        float requested_ar =
+            (float) screen->last_requested_display_size.width
+                    / screen->last_requested_display_size.height;
+
+        srcrect.x = 0;
+        srcrect.y = 0;
+        srcrect.w = screen->frame_size.width;
+        srcrect.h = screen->frame_size.height;
+        if (requested_ar > frame_ar) {
+            srcrect.h = srcrect.w / requested_ar;
+            srcrect.y = (screen->frame_size.height - srcrect.h) / 2.f;
+        } else if (requested_ar < frame_ar) {
+            srcrect.w = srcrect.h * requested_ar;
+            srcrect.x = (screen->frame_size.width - srcrect.w) / 2.f;
+        }
+        src = &srcrect;
+    }
 
     if (orientation == SC_ORIENTATION_0) {
-        return SDL_RenderTexture(renderer, texture, NULL, geometry);
+        return SDL_RenderTexture(renderer, texture, src, geometry);
     }
 
     unsigned cw_rotation = sc_orientation_get_rotation(orientation);
@@ -430,7 +497,7 @@ sc_screen_render_texture(struct sc_screen *screen, const SDL_FRect *geometry) {
     SDL_FlipMode flip = sc_orientation_is_mirror(orientation)
                       ? SDL_FLIP_HORIZONTAL : 0;
 
-    return SDL_RenderTextureRotated(renderer, texture, NULL, dstrect, angle,
+    return SDL_RenderTextureRotated(renderer, texture, src, dstrect, angle,
                                     NULL, flip);
 }
 
@@ -585,12 +652,12 @@ end:
     sc_sdl_render_present(renderer);
     if (screen->window_shown) {
         // Safety net for compositors/backends that miss resize events.
-        sc_screen_maybe_request_display_resize(screen);
+        sc_screen_maybe_request_display_resize(screen, false);
     }
 }
 
 static void
-sc_screen_maybe_request_display_resize(struct sc_screen *screen) {
+sc_screen_maybe_request_display_resize(struct sc_screen *screen, bool force) {
     if (!screen->flex_display || screen->disconnected) {
         return;
     }
@@ -624,7 +691,8 @@ sc_screen_maybe_request_display_resize(struct sc_screen *screen) {
     }
 
     sc_tick now = sc_tick_now();
-    if (screen->last_resize_request_tick
+    if (!force
+            && screen->last_resize_request_tick
             && now - screen->last_resize_request_tick
                     < FLEX_DISPLAY_RESIZE_MIN_INTERVAL) {
         return;
@@ -642,12 +710,13 @@ static void
 sc_screen_on_resize(struct sc_screen *screen) {
     // This event can be triggered before the window is shown
     if (screen->window_shown) {
+        sc_screen_note_raw_frame_resize_activity(screen);
         if (screen->flex_display) {
             screen->transient_stretch = true;
             screen->last_resize_event_tick = sc_tick_now();
         }
         sc_screen_render(screen, true);
-        sc_screen_maybe_request_display_resize(screen);
+        sc_screen_maybe_request_display_resize(screen, false);
     }
 }
 
@@ -765,43 +834,171 @@ sc_screen_frame_sink_push_session(struct sc_frame_sink *sink,
 static void
 sc_screen_raw_frame_clear(struct sc_screen *screen, bool pending) {
     if (pending) {
-        free(screen->pending_raw_frame.pixels);
+        if (screen->pending_raw_frame.owns_pixels) {
+            free(screen->pending_raw_frame.pixels);
+        }
+#ifndef _WIN32
+        if (screen->pending_raw_frame.dmabuf_fd >= 0) {
+            close(screen->pending_raw_frame.dmabuf_fd);
+        }
+#endif
         memset(&screen->pending_raw_frame, 0, sizeof(screen->pending_raw_frame));
+        screen->pending_raw_frame.dmabuf_fd = -1;
         screen->pending_raw_frame_available = false;
     } else {
-        free(screen->raw_frame.pixels);
+        if (screen->raw_frame.owns_pixels) {
+            free(screen->raw_frame.pixels);
+        }
+#ifndef _WIN32
+        if (screen->raw_frame.dmabuf_fd >= 0) {
+            close(screen->raw_frame.dmabuf_fd);
+        }
+#endif
         memset(&screen->raw_frame, 0, sizeof(screen->raw_frame));
+        screen->raw_frame.dmabuf_fd = -1;
     }
+}
+
+static void
+sc_screen_raw_frame_cancel_pending_push(struct sc_screen *screen,
+                                        bool close_source) {
+    sc_mutex_lock(&screen->mutex);
+    sc_screen_raw_frame_clear(screen, true);
+    screen->raw_frame_event_pending = false;
+    SDL_TimerID timer =
+        sc_screen_take_raw_frame_refresh_timer_locked(screen);
+    if (close_source) {
+        screen->raw_frame_source_open = false;
+#ifndef NDEBUG
+        screen->open = false;
+#endif
+    }
+    sc_mutex_unlock(&screen->mutex);
+    if (timer) {
+        SDL_RemoveTimer(timer);
+    }
+}
+
+static bool
+sc_screen_should_throttle_raw_frame_locked(struct sc_screen *screen,
+                                           sc_tick now) {
+    if (!screen->raw_frame_source_open
+            || !screen->last_raw_frame_render_tick
+            || !screen->last_raw_frame_resize_tick) {
+        return false;
+    }
+
+    bool resize_active = now - screen->last_raw_frame_resize_tick
+            < RAW_FRAME_RESIZE_STILL_DELAY;
+    if (!resize_active) {
+        return false;
+    }
+
+    return now - screen->last_raw_frame_render_tick
+            < RAW_FRAME_RESIZE_ACTIVE_MIN_INTERVAL;
+}
+
+static Uint32
+sc_screen_raw_frame_throttle_delay_ms_locked(struct sc_screen *screen,
+                                             sc_tick now) {
+    sc_tick deadline =
+        screen->last_raw_frame_render_tick
+        + RAW_FRAME_RESIZE_ACTIVE_MIN_INTERVAL;
+    sc_tick delay = deadline > now ? deadline - now : SC_TICK_FROM_MS(1);
+    Uint32 delay_ms = SC_TICK_TO_MS(delay);
+    return delay_ms ? delay_ms : 1;
+}
+
+static SDL_TimerID
+sc_screen_take_raw_frame_refresh_timer_locked(struct sc_screen *screen) {
+    SDL_TimerID timer = screen->raw_frame_refresh_timer;
+    screen->raw_frame_refresh_timer = 0;
+    return timer;
+}
+
+static void
+sc_screen_schedule_raw_frame_refresh_locked(struct sc_screen *screen,
+                                            sc_tick now) {
+    if (screen->raw_frame_refresh_timer
+            || !screen->pending_raw_frame_available
+            || screen->raw_frame_event_pending) {
+        return;
+    }
+
+    screen->raw_frame_refresh_timer =
+        SDL_AddTimer(sc_screen_raw_frame_throttle_delay_ms_locked(screen, now),
+                     sc_screen_raw_frame_refresh_timer, screen);
+}
+
+static Uint32 SDLCALL
+sc_screen_raw_frame_refresh_timer(void *userdata, SDL_TimerID timerID,
+                                  Uint32 interval) {
+    (void) interval;
+
+    struct sc_screen *screen = userdata;
+    bool push_raw_frame_event = false;
+    Uint32 next_interval = 0;
+
+    sc_mutex_lock(&screen->mutex);
+    if (screen->raw_frame_refresh_timer != timerID) {
+        sc_mutex_unlock(&screen->mutex);
+        return 0;
+    }
+
+    sc_tick now = sc_tick_now();
+    if (!screen->raw_frame_source_open
+            || !screen->pending_raw_frame_available
+            || screen->raw_frame_event_pending) {
+        screen->raw_frame_refresh_timer = 0;
+    } else if (sc_screen_should_throttle_raw_frame_locked(screen, now)) {
+        next_interval =
+            sc_screen_raw_frame_throttle_delay_ms_locked(screen, now);
+    } else {
+        screen->raw_frame_refresh_timer = 0;
+        screen->raw_frame_event_pending = true;
+        push_raw_frame_event = true;
+    }
+    sc_mutex_unlock(&screen->mutex);
+
+    if (push_raw_frame_event && !sc_push_event(SC_EVENT_NEW_RAW_FRAME)) {
+        sc_screen_raw_frame_cancel_pending_push(screen, false);
+    }
+
+    return next_interval;
 }
 
 bool
 sc_screen_push_raw_frame(struct sc_screen *screen, uint32_t display_number,
                          uint32_t width, uint32_t height, uint32_t fourcc,
                          SDL_PixelFormat format, uint32_t stride,
-                         const uint8_t *pixels, size_t size_bytes) {
+                         uint8_t *pixels, size_t size_bytes,
+                         bool owns_pixels) {
     assert(screen->video);
 
     if (!width || width > 0xFFFF || !height || height > 0xFFFF
             || format == SDL_PIXELFORMAT_UNKNOWN || !stride || !pixels
             || !size_bytes) {
         LOGE("Invalid raw frame");
+        if (owns_pixels) {
+            free(pixels);
+        }
         return false;
     }
-
-    uint8_t *copy = malloc(size_bytes);
-    if (!copy) {
-        LOG_OOM();
-        return false;
-    }
-    memcpy(copy, pixels, size_bytes);
 
     bool open_window = false;
     bool previous_skipped;
+    bool push_raw_frame_event = false;
 
     sc_mutex_lock(&screen->mutex);
+    sc_tick now = sc_tick_now();
+    bool throttled = sc_screen_should_throttle_raw_frame_locked(screen, now);
+    if (throttled) {
+        sc_fps_counter_add_skipped_frame(&screen->fps_counter);
+    }
+
     previous_skipped = screen->pending_raw_frame_available;
     if (previous_skipped) {
-        free(screen->pending_raw_frame.pixels);
+        sc_screen_raw_frame_clear(screen, true);
     }
 
     screen->pending_raw_frame.display_number = display_number;
@@ -810,8 +1007,11 @@ sc_screen_push_raw_frame(struct sc_screen *screen, uint32_t display_number,
     screen->pending_raw_frame.fourcc = fourcc;
     screen->pending_raw_frame.format = format;
     screen->pending_raw_frame.stride = stride;
-    screen->pending_raw_frame.pixels = copy;
+    screen->pending_raw_frame.pixels = pixels;
     screen->pending_raw_frame.size_bytes = size_bytes;
+    screen->pending_raw_frame.dmabuf_fd = -1;
+    screen->pending_raw_frame.is_dmabuf = false;
+    screen->pending_raw_frame.owns_pixels = owns_pixels;
     screen->pending_raw_frame_available = true;
 
     if (!screen->raw_frame_source_open) {
@@ -824,15 +1024,104 @@ sc_screen_push_raw_frame(struct sc_screen *screen, uint32_t display_number,
         screen->open = true;
 #endif
     }
+
+    if (!throttled && !screen->raw_frame_event_pending) {
+        screen->raw_frame_event_pending = true;
+        push_raw_frame_event = true;
+    } else if (throttled) {
+        sc_screen_schedule_raw_frame_refresh_locked(screen, now);
+    }
     sc_mutex_unlock(&screen->mutex);
 
     if (open_window && !sc_push_event(SC_EVENT_OPEN_WINDOW)) {
+        sc_screen_raw_frame_cancel_pending_push(screen, true);
         return false;
     }
 
     if (previous_skipped) {
         sc_fps_counter_add_skipped_frame(&screen->fps_counter);
-    } else if (!sc_push_event(SC_EVENT_NEW_RAW_FRAME)) {
+    }
+
+    if (push_raw_frame_event && !sc_push_event(SC_EVENT_NEW_RAW_FRAME)) {
+        sc_screen_raw_frame_cancel_pending_push(screen, false);
+        return false;
+    }
+
+    return true;
+}
+
+bool
+sc_screen_push_dmabuf_frame(struct sc_screen *screen, uint32_t display_number,
+                            uint32_t width, uint32_t height, uint32_t fourcc,
+                            SDL_PixelFormat format, int dmabuf_fd,
+                            uint32_t offset, uint32_t stride,
+                            uint32_t modifier_hi, uint32_t modifier_lo) {
+    assert(screen->video);
+
+    if (!width || width > 0xFFFF || !height || height > 0xFFFF
+            || format == SDL_PIXELFORMAT_UNKNOWN || dmabuf_fd < 0 || !stride) {
+        LOGE("Invalid DMA-BUF frame");
+#ifndef _WIN32
+        if (dmabuf_fd >= 0) {
+            close(dmabuf_fd);
+        }
+#endif
+        return false;
+    }
+
+    bool open_window = false;
+    bool previous_skipped;
+    bool push_raw_frame_event = false;
+
+    sc_mutex_lock(&screen->mutex);
+    previous_skipped = screen->pending_raw_frame_available;
+    if (previous_skipped) {
+        sc_screen_raw_frame_clear(screen, true);
+    }
+
+    screen->pending_raw_frame.display_number = display_number;
+    screen->pending_raw_frame.size.width = width;
+    screen->pending_raw_frame.size.height = height;
+    screen->pending_raw_frame.fourcc = fourcc;
+    screen->pending_raw_frame.format = format;
+    screen->pending_raw_frame.stride = stride;
+    screen->pending_raw_frame.pixels = NULL;
+    screen->pending_raw_frame.size_bytes = 0;
+    screen->pending_raw_frame.dmabuf_fd = dmabuf_fd;
+    screen->pending_raw_frame.offset = offset;
+    screen->pending_raw_frame.modifier_hi = modifier_hi;
+    screen->pending_raw_frame.modifier_lo = modifier_lo;
+    screen->pending_raw_frame.is_dmabuf = true;
+    screen->pending_raw_frame.owns_pixels = false;
+    screen->pending_raw_frame_available = true;
+
+    if (!screen->raw_frame_source_open) {
+        screen->frame_size = screen->pending_raw_frame.size;
+        screen->content_size = get_oriented_size(screen->frame_size,
+                                                 screen->orientation);
+        screen->raw_frame_source_open = true;
+        open_window = true;
+#ifndef NDEBUG
+        screen->open = true;
+#endif
+    }
+    if (!screen->raw_frame_event_pending) {
+        screen->raw_frame_event_pending = true;
+        push_raw_frame_event = true;
+    }
+    sc_mutex_unlock(&screen->mutex);
+
+    if (open_window && !sc_push_event(SC_EVENT_OPEN_WINDOW)) {
+        sc_screen_raw_frame_cancel_pending_push(screen, true);
+        return false;
+    }
+
+    if (previous_skipped) {
+        sc_fps_counter_add_skipped_frame(&screen->fps_counter);
+    }
+
+    if (push_raw_frame_event && !sc_push_event(SC_EVENT_NEW_RAW_FRAME)) {
+        sc_screen_raw_frame_cancel_pending_push(screen, false);
         return false;
     }
 
@@ -841,14 +1130,29 @@ sc_screen_push_raw_frame(struct sc_screen *screen, uint32_t display_number,
 
 void
 sc_screen_close_raw_frame_source(struct sc_screen *screen) {
+    sc_mutex_lock(&screen->mutex);
     if (!screen->raw_frame_source_open) {
+        SDL_TimerID timer =
+            sc_screen_take_raw_frame_refresh_timer_locked(screen);
+        sc_mutex_unlock(&screen->mutex);
+        if (timer) {
+            SDL_RemoveTimer(timer);
+        }
         return;
     }
 
     screen->raw_frame_source_open = false;
+    screen->raw_frame_event_pending = false;
+    SDL_TimerID timer =
+        sc_screen_take_raw_frame_refresh_timer_locked(screen);
 #ifndef NDEBUG
     screen->open = false;
 #endif
+    sc_mutex_unlock(&screen->mutex);
+
+    if (timer) {
+        SDL_RemoveTimer(timer);
+    }
 }
 
 bool
@@ -865,8 +1169,14 @@ sc_screen_init(struct sc_screen *screen,
     screen->disconnect_started = false;
     memset(&screen->pending_raw_frame, 0, sizeof(screen->pending_raw_frame));
     memset(&screen->raw_frame, 0, sizeof(screen->raw_frame));
+    screen->pending_raw_frame.dmabuf_fd = -1;
+    screen->raw_frame.dmabuf_fd = -1;
     screen->pending_raw_frame_available = false;
+    screen->raw_frame_event_pending = false;
     screen->raw_frame_source_open = false;
+    screen->raw_frame_refresh_timer = 0;
+    screen->raw_upload_pixels = NULL;
+    screen->raw_upload_capacity = 0;
 
     screen->video = params->video;
     screen->camera = params->camera;
@@ -876,8 +1186,14 @@ sc_screen_init(struct sc_screen *screen,
     screen->last_requested_display_size.width = 0;
     screen->last_requested_display_size.height = 0;
     screen->last_resize_request_tick = 0;
+    screen->initial_window_show_deferred = false;
+    screen->initial_display_size.width = 0;
+    screen->initial_display_size.height = 0;
+    screen->initial_window_prepare_tick = 0;
     screen->transient_stretch = false;
     screen->last_resize_event_tick = 0;
+    screen->last_raw_frame_render_tick = 0;
+    screen->last_raw_frame_resize_tick = 0;
     screen->hotspot_button_down = false;
     screen->hotspot_press_started_in_hotspot = false;
     screen->hotspot_dragged = false;
@@ -1139,7 +1455,9 @@ sc_screen_show_initial_window(struct sc_screen *screen) {
                                                        screen->req.height);
 
     assert(is_windowed(screen));
-    set_aspect_ratio(screen, screen->content_size);
+    if (!screen->flex_display) {
+        set_aspect_ratio(screen, screen->content_size);
+    }
     sc_sdl_set_window_size(screen->window, window_size);
     sc_sdl_set_window_position(screen->window, position);
 
@@ -1151,9 +1469,42 @@ sc_screen_show_initial_window(struct sc_screen *screen) {
         sc_fps_counter_start(&screen->fps_counter);
     }
 
+    sc_screen_update_content_rect(screen);
+
+    if (screen->flex_display) {
+        screen->initial_window_show_deferred = true;
+        screen->initial_window_prepare_tick = sc_tick_now();
+        sc_screen_maybe_request_display_resize(screen, true);
+        screen->initial_display_size = screen->last_requested_display_size;
+        // Do not let the initial relayout request throttle the compositor's
+        // first post-show window size notification.
+        screen->last_resize_request_tick = 0;
+        if (screen->initial_display_size.width
+                && screen->initial_display_size.height) {
+            return;
+        }
+    }
+
+    sc_screen_show_prepared_window(screen);
+}
+
+static void
+sc_screen_show_prepared_window(struct sc_screen *screen) {
+    if (screen->window_shown) {
+        return;
+    }
+
+    screen->initial_window_show_deferred = false;
     screen->window_shown = true;
+    if (!screen->flex_display) {
+        set_aspect_ratio(screen, screen->content_size);
+    }
     sc_sdl_show_window(screen->window);
     sc_screen_update_content_rect(screen);
+
+    if (sc_screen_is_relative_mode(screen)) {
+        sc_mouse_capture_set_active(&screen->mc, true);
+    }
 }
 
 void
@@ -1192,8 +1543,12 @@ sc_screen_destroy(struct sc_screen *screen) {
     }
     sc_texture_destroy(&screen->tex);
     av_frame_free(&screen->frame);
+    if (screen->raw_frame_refresh_timer) {
+        SDL_RemoveTimer(screen->raw_frame_refresh_timer);
+    }
     sc_screen_raw_frame_clear(screen, true);
     sc_screen_raw_frame_clear(screen, false);
+    free(screen->raw_upload_pixels);
 #ifdef SC_DISPLAY_FORCE_OPENGL_CORE_PROFILE
     SDL_GL_DestroyContext(screen->gl_context);
 #endif
@@ -1353,14 +1708,179 @@ sc_screen_update_frame(struct sc_screen *screen) {
     return sc_screen_apply_frame(screen, can_resize);
 }
 
+struct sc_raw_frame_view {
+    struct sc_size size;
+    const uint8_t *pixels;
+    uint32_t stride;
+    uint32_t offset;
+};
+
+static bool
+sc_screen_get_raw_frame_crop(struct sc_screen *screen,
+                             struct sc_size frame_size,
+                             uint32_t bytes_per_pixel,
+                             SDL_Rect *crop) {
+    crop->x = 0;
+    crop->y = 0;
+    crop->w = frame_size.width;
+    crop->h = frame_size.height;
+
+    if (!screen->flex_display
+            || !screen->last_requested_display_size.width
+            || !screen->last_requested_display_size.height
+            || !frame_size.width || !frame_size.height) {
+        return true;
+    }
+
+    float frame_ar = (float) frame_size.width / frame_size.height;
+    float requested_ar =
+        (float) screen->last_requested_display_size.width
+                / screen->last_requested_display_size.height;
+
+    if (requested_ar > frame_ar) {
+        crop->h = (int) ((float) crop->w / requested_ar);
+        crop->y = ((int) frame_size.height - crop->h) / 2;
+    } else if (requested_ar < frame_ar) {
+        crop->w = (int) ((float) crop->h * requested_ar);
+        crop->x = ((int) frame_size.width - crop->w) / 2;
+    }
+
+    if (crop->w <= 0 || crop->h <= 0) {
+        return false;
+    }
+
+    // Keep packed 32-bit uploads naturally aligned.
+    if (bytes_per_pixel == 4) {
+        crop->x &= ~1;
+        crop->w &= ~1;
+    }
+
+    return crop->w > 0 && crop->h > 0;
+}
+
+static bool
+sc_screen_raw_upload_scratch_ensure(struct sc_screen *screen,
+                                    size_t size) {
+    if (screen->raw_upload_capacity >= size) {
+        return true;
+    }
+
+    uint8_t *pixels = realloc(screen->raw_upload_pixels, size);
+    if (!pixels) {
+        LOG_OOM();
+        return false;
+    }
+    screen->raw_upload_pixels = pixels;
+    screen->raw_upload_capacity = size;
+    return true;
+}
+
+static bool
+sc_screen_scale_raw_frame_nearest(struct sc_screen *screen,
+                                  const uint8_t *src,
+                                  uint32_t src_stride,
+                                  struct sc_size src_size,
+                                  struct sc_size dst_size,
+                                  uint32_t bytes_per_pixel,
+                                  struct sc_raw_frame_view *view) {
+    if (bytes_per_pixel != 4 || !dst_size.width || !dst_size.height) {
+        return false;
+    }
+
+    size_t dst_stride = (size_t) dst_size.width * bytes_per_pixel;
+    size_t dst_size_bytes = dst_stride * dst_size.height;
+    if (!sc_screen_raw_upload_scratch_ensure(screen, dst_size_bytes)) {
+        return false;
+    }
+
+    for (uint32_t y = 0; y < dst_size.height; ++y) {
+        uint32_t src_y = (uint64_t) y * src_size.height / dst_size.height;
+        const uint8_t *src_row = src + (size_t) src_y * src_stride;
+        uint8_t *dst_row = screen->raw_upload_pixels + y * dst_stride;
+        for (uint32_t x = 0; x < dst_size.width; ++x) {
+            uint32_t src_x = (uint64_t) x * src_size.width / dst_size.width;
+            memcpy(dst_row + (size_t) x * bytes_per_pixel,
+                   src_row + (size_t) src_x * bytes_per_pixel,
+                   bytes_per_pixel);
+        }
+    }
+
+    view->size = dst_size;
+    view->pixels = screen->raw_upload_pixels;
+    view->stride = dst_stride;
+    view->offset = 0;
+    return true;
+}
+
+static bool
+sc_screen_get_raw_frame_upload_view(struct sc_screen *screen,
+                                    struct sc_raw_frame_view *view) {
+    uint32_t bytes_per_pixel = SDL_BYTESPERPIXEL(screen->raw_frame.format);
+    if (!bytes_per_pixel) {
+        return false;
+    }
+
+    SDL_Rect crop;
+    if (!sc_screen_get_raw_frame_crop(screen, screen->raw_frame.size,
+                                      bytes_per_pixel, &crop)) {
+        return false;
+    }
+
+    const uint8_t *pixels = screen->raw_frame.pixels
+                          + (size_t) crop.y * screen->raw_frame.stride
+                          + (size_t) crop.x * bytes_per_pixel;
+
+    struct sc_size crop_size = {
+        .width = crop.w,
+        .height = crop.h,
+    };
+    struct sc_size target_size = crop_size;
+    if (screen->flex_display
+            && screen->last_requested_display_size.width
+            && screen->last_requested_display_size.height
+            && screen->last_requested_display_size.width < crop_size.width
+            && screen->last_requested_display_size.height < crop_size.height) {
+        target_size = screen->last_requested_display_size;
+    }
+
+    if (target_size.width != crop_size.width
+            || target_size.height != crop_size.height) {
+        return sc_screen_scale_raw_frame_nearest(
+            screen, pixels, screen->raw_frame.stride, crop_size, target_size,
+            bytes_per_pixel, view);
+    }
+
+    view->size = crop_size;
+    view->pixels = pixels;
+    view->stride = screen->raw_frame.stride;
+    view->offset = (size_t) crop.y * screen->raw_frame.stride
+                 + (size_t) crop.x * bytes_per_pixel;
+    return true;
+}
+
 static bool
 sc_screen_apply_raw_frame(struct sc_screen *screen) {
     assert(screen->video);
-    assert(screen->window_shown);
 
     sc_fps_counter_add_rendered_frame(&screen->fps_counter);
 
-    struct sc_size new_frame_size = screen->raw_frame.size;
+    if (sc_screen_should_hold_resize_preview(screen)) {
+        sc_mutex_lock(&screen->mutex);
+        screen->last_raw_frame_render_tick = sc_tick_now();
+        sc_mutex_unlock(&screen->mutex);
+        sc_screen_render(screen, true);
+        return true;
+    }
+
+    struct sc_raw_frame_view raw_view = {};
+    if (!screen->raw_frame.is_dmabuf
+            && !sc_screen_get_raw_frame_upload_view(screen, &raw_view)) {
+        return false;
+    }
+
+    struct sc_size new_frame_size = screen->raw_frame.is_dmabuf
+                                  ? screen->raw_frame.size
+                                  : raw_view.size;
     if (screen->frame_size.width != new_frame_size.width
             || screen->frame_size.height != new_frame_size.height) {
         screen->frame_size = new_frame_size;
@@ -1371,13 +1891,59 @@ sc_screen_apply_raw_frame(struct sc_screen *screen) {
         sc_screen_update_content_rect(screen);
     }
 
-    bool ok =
-        sc_texture_set_from_raw_frame(&screen->tex, screen->raw_frame.size,
-                                      screen->raw_frame.format,
-                                      screen->raw_frame.pixels,
-                                      screen->raw_frame.stride);
+    bool ok;
+    if (screen->raw_frame.is_dmabuf) {
+        ok = sc_texture_set_from_dmabuf_frame(&screen->tex,
+                                              screen->raw_frame.size,
+                                              screen->raw_frame.fourcc,
+                                              screen->raw_frame.format,
+                                              screen->raw_frame.dmabuf_fd,
+                                              screen->raw_frame.offset,
+                                              screen->raw_frame.stride,
+                                              screen->raw_frame.modifier_hi,
+                                              screen->raw_frame.modifier_lo);
+    } else {
+        ok = sc_texture_set_from_raw_frame(&screen->tex, raw_view.size,
+                                           screen->raw_frame.format,
+                                           raw_view.pixels,
+                                           raw_view.stride);
+    }
     if (!ok) {
         return false;
+    }
+
+    sc_mutex_lock(&screen->mutex);
+    screen->last_raw_frame_render_tick = sc_tick_now();
+    sc_mutex_unlock(&screen->mutex);
+
+    if (!screen->window_shown && screen->initial_window_show_deferred) {
+        struct sc_size source_size = screen->raw_frame.size;
+        int dw = (int) source_size.width
+               - (int) screen->initial_display_size.width;
+        int dh = (int) source_size.height
+               - (int) screen->initial_display_size.height;
+        int abs_dw = dw >= 0 ? dw : -dw;
+        int abs_dh = dh >= 0 ? dh : -dh;
+        sc_tick now = sc_tick_now();
+        bool size_caught_up =
+            screen->initial_display_size.width
+            && screen->initial_display_size.height
+            && abs_dw <= FLEX_DISPLAY_SIZE_MATCH_TOLERANCE
+            && abs_dh <= FLEX_DISPLAY_SIZE_MATCH_TOLERANCE;
+        bool wait_expired =
+            screen->initial_window_prepare_tick
+            && now - screen->initial_window_prepare_tick
+                    >= FLEX_DISPLAY_INITIAL_SHOW_MAX_DELAY;
+
+        if (size_caught_up || wait_expired) {
+            sc_screen_show_prepared_window(screen);
+        } else {
+            return true;
+        }
+    }
+
+    if (!screen->window_shown) {
+        return true;
     }
 
     sc_screen_render(screen, false);
@@ -1389,11 +1955,23 @@ sc_screen_update_raw_frame(struct sc_screen *screen) {
     assert(screen->video);
 
     sc_mutex_lock(&screen->mutex);
-    assert(screen->pending_raw_frame_available);
+    sc_tick now = sc_tick_now();
+    screen->raw_frame_event_pending = false;
+    if (!screen->pending_raw_frame_available) {
+        sc_mutex_unlock(&screen->mutex);
+        return true;
+    }
+    if (sc_screen_should_throttle_raw_frame_locked(screen, now)) {
+        sc_fps_counter_add_skipped_frame(&screen->fps_counter);
+        sc_screen_schedule_raw_frame_refresh_locked(screen, now);
+        sc_mutex_unlock(&screen->mutex);
+        return true;
+    }
 
     sc_screen_raw_frame_clear(screen, false);
     screen->raw_frame = screen->pending_raw_frame;
     memset(&screen->pending_raw_frame, 0, sizeof(screen->pending_raw_frame));
+    screen->pending_raw_frame.dmabuf_fd = -1;
     screen->pending_raw_frame_available = false;
     sc_mutex_unlock(&screen->mutex);
 
@@ -1555,6 +2133,19 @@ sc_disconnect_on_timeout(struct sc_disconnect *d, void *userdata) {
     (void) ok; // ignore failure
 }
 
+static void
+sc_screen_note_raw_frame_resize_activity(struct sc_screen *screen) {
+    if (!screen->raw_frame_source_open) {
+        return;
+    }
+
+    sc_mutex_lock(&screen->mutex);
+    sc_tick now = sc_tick_now();
+    screen->last_raw_frame_resize_tick = now;
+    sc_screen_schedule_raw_frame_refresh_locked(screen, now);
+    sc_mutex_unlock(&screen->mutex);
+}
+
 void
 sc_screen_handle_event(struct sc_screen *screen, const SDL_Event *event) {
     sc_screen_poll_hotspot_state(screen);
@@ -1566,13 +2157,9 @@ sc_screen_handle_event(struct sc_screen *screen, const SDL_Event *event) {
     switch (event->type) {
         case SC_EVENT_OPEN_WINDOW:
             sc_screen_show_initial_window(screen);
-
-            if (sc_screen_is_relative_mode(screen)) {
-                // Capture mouse on start
-                sc_mouse_capture_set_active(&screen->mc, true);
+            if (screen->window_shown) {
+                sc_screen_render(screen, false);
             }
-
-            sc_screen_render(screen, false);
             return;
         case SC_EVENT_NEW_FRAME: {
             bool ok = sc_screen_update_frame(screen);
@@ -1749,15 +2336,14 @@ sc_screen_handle_disconnection(struct sc_screen *screen) {
     }
 }
 
-struct sc_point
-sc_screen_convert_drawable_to_frame_coords(struct sc_screen *screen,
-                                           int32_t x, int32_t y) {
+static struct sc_point
+sc_screen_convert_drawable_to_coords(struct sc_screen *screen, int32_t x,
+                                     int32_t y, struct sc_size oriented_size) {
     assert(screen->video);
-
     enum sc_orientation orientation = screen->orientation;
 
-    int32_t w = screen->content_size.width;
-    int32_t h = screen->content_size.height;
+    int32_t w = oriented_size.width;
+    int32_t h = oriented_size.height;
 
     // screen->rect must be initialized to avoid a division by zero
     assert(screen->rect.w && screen->rect.h);
@@ -1806,10 +2392,44 @@ sc_screen_convert_drawable_to_frame_coords(struct sc_screen *screen,
 }
 
 struct sc_point
+sc_screen_convert_drawable_to_frame_coords(struct sc_screen *screen,
+                                           int32_t x, int32_t y) {
+    return sc_screen_convert_drawable_to_coords(screen, x, y,
+                                               screen->content_size);
+}
+
+struct sc_size
+sc_screen_get_input_size(struct sc_screen *screen) {
+    if (screen->raw_frame_source_open
+            && screen->flex_display
+            && screen->last_requested_display_size.width
+            && screen->last_requested_display_size.height) {
+        return screen->last_requested_display_size;
+    }
+    return screen->frame_size;
+}
+
+struct sc_point
+sc_screen_convert_drawable_to_input_coords(struct sc_screen *screen,
+                                           int32_t x, int32_t y) {
+    struct sc_size input_size =
+        get_oriented_size(sc_screen_get_input_size(screen),
+                          screen->orientation);
+    return sc_screen_convert_drawable_to_coords(screen, x, y, input_size);
+}
+
+struct sc_point
 sc_screen_convert_window_to_frame_coords(struct sc_screen *screen,
                                          int32_t x, int32_t y) {
     sc_screen_hidpi_scale_coords(screen, &x, &y);
     return sc_screen_convert_drawable_to_frame_coords(screen, x, y);
+}
+
+struct sc_point
+sc_screen_convert_window_to_input_coords(struct sc_screen *screen,
+                                         int32_t x, int32_t y) {
+    sc_screen_hidpi_scale_coords(screen, &x, &y);
+    return sc_screen_convert_drawable_to_input_coords(screen, x, y);
 }
 
 void

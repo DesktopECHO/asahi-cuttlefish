@@ -370,7 +370,8 @@ simulate_virtual_finger(struct sc_input_manager *im,
     struct sc_control_msg msg;
     msg.type = SC_CONTROL_MSG_TYPE_INJECT_TOUCH_EVENT;
     msg.inject_touch_event.action = action;
-    msg.inject_touch_event.position.screen_size = im->screen->frame_size;
+    msg.inject_touch_event.position.screen_size =
+        sc_screen_get_input_size(im->screen);
     msg.inject_touch_event.position.point = point;
     msg.inject_touch_event.pointer_id = SC_POINTER_ID_VIRTUAL_FINGER;
     msg.inject_touch_event.pressure = up ? 0.0f : 1.0f;
@@ -711,8 +712,8 @@ sc_input_manager_get_position(struct sc_input_manager *im, int32_t x,
     }
 
     return (struct sc_position) {
-        .screen_size = im->screen->frame_size,
-        .point = sc_screen_convert_window_to_frame_coords(im->screen, x, y),
+        .screen_size = sc_screen_get_input_size(im->screen),
+        .point = sc_screen_convert_window_to_input_coords(im->screen, x, y),
     };
 }
 
@@ -746,9 +747,10 @@ sc_input_manager_process_mouse_motion(struct sc_input_manager *im,
     if (im->vfinger_down) {
         assert(!im->mp->relative_mode); // assert one more time
         struct sc_point mouse =
-           sc_screen_convert_window_to_frame_coords(im->screen, event->x,
-                                                    event->y);
-        struct sc_point vfinger = inverse_point(mouse, im->screen->frame_size,
+            sc_screen_convert_window_to_input_coords(im->screen, event->x,
+                                                                 event->y);
+        struct sc_size input_size = sc_screen_get_input_size(im->screen);
+        struct sc_point vfinger = inverse_point(mouse, input_size,
                                                 im->vfinger_invert_x,
                                                 im->vfinger_invert_y);
         simulate_virtual_finger(im, AMOTION_EVENT_ACTION_MOVE, vfinger);
@@ -776,9 +778,9 @@ sc_input_manager_process_touch(struct sc_input_manager *im,
 
     struct sc_touch_event evt = {
         .position = {
-            .screen_size = im->screen->frame_size,
+            .screen_size = sc_screen_get_input_size(im->screen),
             .point =
-                sc_screen_convert_drawable_to_frame_coords(im->screen, x, y),
+                sc_screen_convert_drawable_to_input_coords(im->screen, x, y),
         },
         .action = sc_touch_action_from_sdl(event->type),
         .pointer_id = event->fingerID,
@@ -956,8 +958,8 @@ sc_input_manager_process_mouse_button(struct sc_input_manager *im,
     // one-mod shortcuts are assigned to rotation and vertical tilt.
     if (change_vfinger) {
         struct sc_point mouse =
-            sc_screen_convert_window_to_frame_coords(im->screen, event->x,
-                                                                 event->y);
+            sc_screen_convert_window_to_input_coords(im->screen, event->x,
+                                                                event->y);
         if (down) {
             // Ctrl  Shift     invert_x  invert_y
             // ----  ----- ==> --------  --------
@@ -968,7 +970,8 @@ sc_input_manager_process_mouse_button(struct sc_input_manager *im,
             im->vfinger_invert_x = ctrl_pressed ^ shift_pressed;
             im->vfinger_invert_y = ctrl_pressed;
         }
-        struct sc_point vfinger = inverse_point(mouse, im->screen->frame_size,
+        struct sc_size input_size = sc_screen_get_input_size(im->screen);
+        struct sc_point vfinger = inverse_point(mouse, input_size,
                                                 im->vfinger_invert_x,
                                                 im->vfinger_invert_y);
         enum android_motionevent_action action = down
