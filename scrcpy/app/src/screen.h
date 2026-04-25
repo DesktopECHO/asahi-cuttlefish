@@ -82,6 +82,7 @@ struct sc_screen {
     sc_tick initial_window_prepare_tick;
     bool transient_stretch;
     sc_tick last_resize_event_tick;
+    SDL_TimerID resize_settle_timer; // protected by mutex
     bool hotspot_button_down;
     bool hotspot_press_started_in_hotspot;
     bool hotspot_dragged;

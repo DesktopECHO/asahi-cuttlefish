@@ -17,6 +17,7 @@
 #define DISPLAY_MARGINS 96
 #define FLEX_DISPLAY_RESIZE_MIN_INTERVAL SC_TICK_FROM_MS(250)
 #define FLEX_DISPLAY_STRETCH_EVENT_DELAY SC_TICK_FROM_MS(250)
+#define FLEX_DISPLAY_RESIZE_SETTLE_DELAY SC_TICK_FROM_MS(100)
 #define FLEX_DISPLAY_STRETCH_PENDING_MAX SC_TICK_FROM_MS(1000)
 #define FLEX_DISPLAY_SIZE_MATCH_TOLERANCE 16
 #define FLEX_DISPLAY_INITIAL_SHOW_MAX_DELAY SC_TICK_FROM_MS(350)
@@ -419,6 +420,13 @@ sc_screen_schedule_raw_frame_refresh_locked(struct sc_screen *screen,
                                             sc_tick now);
 static SDL_TimerID
 sc_screen_take_raw_frame_refresh_timer_locked(struct sc_screen *screen);
+static void
+sc_screen_schedule_resize_settle(struct sc_screen *screen);
+static void
+sc_screen_force_raw_frame_refresh(struct sc_screen *screen);
+static Uint32 SDLCALL
+sc_screen_resize_settle_timer(void *userdata, SDL_TimerID timerID,
+                              Uint32 interval);
 
 static bool
 sc_screen_should_hold_resize_preview(struct sc_screen *screen) {
@@ -433,11 +441,11 @@ sc_screen_should_hold_resize_preview(struct sc_screen *screen) {
     bool recent_resize_event = screen->last_resize_event_tick
             && now - screen->last_resize_event_tick
                     < FLEX_DISPLAY_STRETCH_EVENT_DELAY;
-    bool pending_resize_apply = screen->last_resize_request_tick
-            && now - screen->last_resize_request_tick
-                    < FLEX_DISPLAY_STRETCH_PENDING_MAX;
-
-    return recent_resize_event || pending_resize_apply;
+    // While events are still arriving, keep presenting the stretched preview to
+    // avoid resize bars. Once resizing goes quiet, apply real frames immediately;
+    // waiting for the remote resize request to settle makes the final correction
+    // visibly lag behind the user's pointer release.
+    return recent_resize_event;
 }
 
 static bool
@@ -661,6 +669,9 @@ sc_screen_maybe_request_display_resize(struct sc_screen *screen, bool force) {
     if (!screen->flex_display || screen->disconnected) {
         return;
     }
+    if (!force && screen->transient_stretch) {
+        return;
+    }
 
     assert(!screen->camera);
     // Use window logical size (not drawable pixel size). On HiDPI backends,
@@ -714,10 +725,61 @@ sc_screen_on_resize(struct sc_screen *screen) {
         if (screen->flex_display) {
             screen->transient_stretch = true;
             screen->last_resize_event_tick = sc_tick_now();
+            sc_screen_schedule_resize_settle(screen);
         }
         sc_screen_render(screen, true);
-        sc_screen_maybe_request_display_resize(screen, false);
     }
+}
+
+static SDL_TimerID
+sc_screen_take_resize_settle_timer_locked(struct sc_screen *screen) {
+    SDL_TimerID timer = screen->resize_settle_timer;
+    screen->resize_settle_timer = 0;
+    return timer;
+}
+
+static void
+sc_screen_schedule_resize_settle(struct sc_screen *screen) {
+    Uint32 delay_ms = SC_TICK_TO_MS(FLEX_DISPLAY_RESIZE_SETTLE_DELAY);
+    if (!delay_ms) {
+        delay_ms = 1;
+    }
+
+    SDL_TimerID old_timer;
+    SDL_TimerID new_timer =
+        SDL_AddTimer(delay_ms, sc_screen_resize_settle_timer, screen);
+
+    sc_mutex_lock(&screen->mutex);
+    old_timer = sc_screen_take_resize_settle_timer_locked(screen);
+    screen->resize_settle_timer = new_timer;
+    sc_mutex_unlock(&screen->mutex);
+
+    if (old_timer) {
+        SDL_RemoveTimer(old_timer);
+    }
+}
+
+static Uint32 SDLCALL
+sc_screen_resize_settle_timer(void *userdata, SDL_TimerID timerID,
+                              Uint32 interval) {
+    (void) interval;
+
+    struct sc_screen *screen = userdata;
+    bool push_event = false;
+
+    sc_mutex_lock(&screen->mutex);
+    if (screen->resize_settle_timer == timerID) {
+        screen->resize_settle_timer = 0;
+        push_event = true;
+    }
+    sc_mutex_unlock(&screen->mutex);
+
+    if (push_event) {
+        bool ok = sc_push_event(SC_EVENT_RESIZE_SETTLED);
+        (void) ok; // ignore failure
+    }
+
+    return 0;
 }
 
 #if defined(__APPLE__) || defined(_WIN32)
@@ -1192,6 +1254,7 @@ sc_screen_init(struct sc_screen *screen,
     screen->initial_window_prepare_tick = 0;
     screen->transient_stretch = false;
     screen->last_resize_event_tick = 0;
+    screen->resize_settle_timer = 0;
     screen->last_raw_frame_render_tick = 0;
     screen->last_raw_frame_resize_tick = 0;
     screen->hotspot_button_down = false;
@@ -1545,6 +1608,9 @@ sc_screen_destroy(struct sc_screen *screen) {
     av_frame_free(&screen->frame);
     if (screen->raw_frame_refresh_timer) {
         SDL_RemoveTimer(screen->raw_frame_refresh_timer);
+    }
+    if (screen->resize_settle_timer) {
+        SDL_RemoveTimer(screen->resize_settle_timer);
     }
     sc_screen_raw_frame_clear(screen, true);
     sc_screen_raw_frame_clear(screen, false);
@@ -2146,6 +2212,50 @@ sc_screen_note_raw_frame_resize_activity(struct sc_screen *screen) {
     sc_mutex_unlock(&screen->mutex);
 }
 
+static void
+sc_screen_force_raw_frame_refresh(struct sc_screen *screen) {
+    bool push_raw_frame_event = false;
+
+    sc_mutex_lock(&screen->mutex);
+    screen->last_raw_frame_resize_tick = 0;
+    SDL_TimerID timer =
+        sc_screen_take_raw_frame_refresh_timer_locked(screen);
+    if (screen->raw_frame_source_open
+            && screen->pending_raw_frame_available
+            && !screen->raw_frame_event_pending) {
+        screen->raw_frame_event_pending = true;
+        push_raw_frame_event = true;
+    }
+    sc_mutex_unlock(&screen->mutex);
+
+    if (timer) {
+        SDL_RemoveTimer(timer);
+    }
+    if (push_raw_frame_event) {
+        bool ok = sc_push_event(SC_EVENT_NEW_RAW_FRAME);
+        (void) ok; // ignore failure
+    }
+}
+
+static void
+sc_screen_on_resize_settled(struct sc_screen *screen) {
+    if (!screen->window_shown || !screen->flex_display) {
+        return;
+    }
+
+    sc_tick now = sc_tick_now();
+    if (screen->last_resize_event_tick
+            && now - screen->last_resize_event_tick
+                    < FLEX_DISPLAY_RESIZE_SETTLE_DELAY) {
+        sc_screen_schedule_resize_settle(screen);
+        return;
+    }
+
+    sc_screen_maybe_request_display_resize(screen, true);
+    sc_screen_force_raw_frame_refresh(screen);
+    sc_screen_render(screen, true);
+}
+
 void
 sc_screen_handle_event(struct sc_screen *screen, const SDL_Event *event) {
     sc_screen_poll_hotspot_state(screen);
@@ -2175,6 +2285,9 @@ sc_screen_handle_event(struct sc_screen *screen, const SDL_Event *event) {
             }
             return;
         }
+        case SC_EVENT_RESIZE_SETTLED:
+            sc_screen_on_resize_settled(screen);
+            return;
         case SDL_EVENT_WINDOW_EXPOSED:
             sc_screen_render(screen, true);
             return;
