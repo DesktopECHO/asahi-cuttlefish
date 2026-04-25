@@ -42,6 +42,7 @@ sc_texture_init(struct sc_texture *tex, SDL_Renderer *renderer, bool mipmaps) {
 
     tex->renderer = renderer;
     tex->texture = NULL;
+    tex->raw_format = SDL_PIXELFORMAT_UNKNOWN;
     return true;
 }
 
@@ -202,6 +203,56 @@ sc_texture_set_from_frame(struct sc_texture *tex, const AVFrame *frame) {
         gl->BindTexture(GL_TEXTURE_2D, tex->texture_id);
         gl->GenerateMipmap(GL_TEXTURE_2D);
         gl->BindTexture(GL_TEXTURE_2D, 0);
+    }
+
+    return true;
+}
+
+bool
+sc_texture_set_from_raw_frame(struct sc_texture *tex, struct sc_size size,
+                              SDL_PixelFormat format, const uint8_t *pixels,
+                              uint32_t stride) {
+    assert(size.width && size.height);
+    assert(pixels);
+    assert(stride);
+    assert(format != SDL_PIXELFORMAT_UNKNOWN);
+
+    if (!SDL_GetPixelFormatDetails(format)) {
+        LOGE("Unsupported raw frame pixel format: %" PRIu32, format);
+        return false;
+    }
+
+    if (!tex->texture
+            || tex->texture_type != SC_TEXTURE_TYPE_RAW_FRAME
+            || tex->texture_size.width != size.width
+            || tex->texture_size.height != size.height
+            || tex->raw_format != format) {
+        if (tex->texture) {
+            SDL_DestroyTexture(tex->texture);
+        }
+
+        tex->texture = SDL_CreateTexture(tex->renderer, format,
+                                         SDL_TEXTUREACCESS_STREAMING,
+                                         size.width, size.height);
+        if (!tex->texture) {
+            LOGD("Could not create raw frame texture: %s", SDL_GetError());
+            return false;
+        }
+
+        tex->texture_size = size;
+        tex->texture_type = SC_TEXTURE_TYPE_RAW_FRAME;
+        tex->raw_format = format;
+
+        LOGI("Raw texture: %" PRIu16 "x%" PRIu16, size.width, size.height);
+    }
+
+    assert(tex->texture);
+    assert(tex->texture_type == SC_TEXTURE_TYPE_RAW_FRAME);
+
+    bool ok = SDL_UpdateTexture(tex->texture, NULL, pixels, stride);
+    if (!ok) {
+        LOGD("Could not update raw texture: %s", SDL_GetError());
+        return false;
     }
 
     return true;

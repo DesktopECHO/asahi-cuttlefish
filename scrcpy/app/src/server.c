@@ -285,7 +285,7 @@ execute_server(struct sc_server *server,
         ADD_PARAM("audio_codec=%s",
             sc_server_get_codec_name(params->audio_codec));
     }
-    if (params->video_source != SC_VIDEO_SOURCE_DISPLAY) {
+    if (params->video && params->video_source != SC_VIDEO_SOURCE_DISPLAY) {
         assert(params->video_source == SC_VIDEO_SOURCE_CAMERA);
         ADD_PARAM("video_source=camera");
     }

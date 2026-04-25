@@ -37,6 +37,7 @@
 #include "cuttlefish/host/frontend/webrtc/libdevice/local_recorder.h"
 #include "cuttlefish/host/frontend/webrtc/libdevice/streamer.h"
 #include "cuttlefish/host/frontend/webrtc/libdevice/video_sink.h"
+#include "cuttlefish/host/frontend/webrtc/raw_frame_streamer.h"
 #include "cuttlefish/host/frontend/webrtc/screenshot_handler.h"
 #include "cuttlefish/host/frontend/webrtc/webrtc_command_channel.h"
 #include "cuttlefish/host/frontend/webrtc/webrtc_commands.pb.h"
@@ -65,6 +66,8 @@ DEFINE_int32(rotary_fd, -1, "An fd to listen on for rotary connections.");
 DEFINE_int32(keyboard_fd, -1, "An fd to listen on for keyboard connections.");
 DEFINE_int32(switches_fd, -1, "An fd to listen on for switch connections.");
 DEFINE_int32(frame_server_fd, -1, "An fd to listen on for frame updates");
+DEFINE_string(raw_frame_socket_path, "",
+              "Optional unix socket path to stream raw frames for local viewers");
 DEFINE_int32(kernel_log_events_fd, -1,
              "An fd to listen on for kernel log events.");
 DEFINE_int32(command_fd, -1, "An fd to listen to for control messages");
@@ -387,6 +390,13 @@ int CuttlefishMain() {
 
   ScreenshotHandler screenshot_handler;
 
+  std::string raw_frame_socket_path = FLAGS_raw_frame_socket_path;
+  if (raw_frame_socket_path.empty()) {
+    raw_frame_socket_path = instance.PerInstanceInternalUdsPath("ika_frames.sock");
+  }
+  auto raw_frame_streamer =
+      std::make_unique<RawFrameStreamer>(std::move(raw_frame_socket_path));
+
   auto streamer =
       Streamer::Create(streamer_config, recording_manager, observer_factory);
   CHECK(streamer) << "Could not create streamer";
@@ -406,7 +416,7 @@ int CuttlefishMain() {
 
   auto display_handler = std::make_shared<DisplayHandler>(
       *streamer, screenshot_handler, screen_connector,
-      std::move(composition_manager));
+      std::move(composition_manager), raw_frame_streamer.get());
 
   if (instance.camera_server_port()) {
     auto camera_controller = streamer->AddCamera(instance.camera_server_port(),

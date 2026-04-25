@@ -16,6 +16,7 @@
 
 #include "audio_player.h"
 #include "controller.h"
+#include "cuttlefish_frame_source.h"
 #include "decoder.h"
 #include "delay_buffer.h"
 #include "demuxer.h"
@@ -55,6 +56,7 @@ struct scrcpy {
     struct sc_decoder audio_decoder;
     struct sc_recorder recorder;
     struct sc_delay_buffer video_buffer;
+    struct sc_cuttlefish_frame_source cuttlefish_frame_source;
 #ifdef HAVE_V4L2
     struct sc_v4l2_sink v4l2_sink;
     struct sc_delay_buffer v4l2_buffer;
@@ -392,6 +394,8 @@ scrcpy(struct scrcpy_options *options) {
 #ifdef HAVE_V4L2
     bool v4l2_sink_initialized = false;
 #endif
+    bool cuttlefish_frame_source_initialized = false;
+    bool cuttlefish_frame_source_started = false;
     bool video_demuxer_started = false;
     bool audio_demuxer_started = false;
 #ifdef HAVE_USB
@@ -408,6 +412,10 @@ scrcpy(struct scrcpy_options *options) {
     bool disconnected = false;
 
     struct sc_acksync *acksync = NULL;
+
+    bool cuttlefish_video = !!options->cuttlefish_frames_socket;
+    bool device_video = options->video && !cuttlefish_video;
+    bool screen_video = options->video_playback || cuttlefish_video;
 
     uint32_t scid = scrcpy_generate_scid();
 
@@ -439,7 +447,7 @@ scrcpy(struct scrcpy_options *options) {
         .display_id = options->display_id,
         .new_display = options->new_display,
         .display_ime_policy = options->display_ime_policy,
-        .video = options->video,
+        .video = device_video,
         .audio = options->audio,
         .audio_dup = options->audio_dup,
         .show_touches = options->show_touches,
@@ -500,7 +508,7 @@ scrcpy(struct scrcpy_options *options) {
     }
 
     // playback implies capture
-    assert(!options->video_playback || options->video);
+    assert(!options->video_playback || options->video || cuttlefish_video);
     assert(!options->audio_playback || options->audio);
 
     if (options->window ||
@@ -511,7 +519,7 @@ scrcpy(struct scrcpy_options *options) {
         // <https://github.com/Genymobile/scrcpy/issues/4418>
         if (!SDL_Init(SDL_INIT_VIDEO)) {
             // If it fails, it is an error only if video playback is enabled
-            if (options->video_playback) {
+            if (screen_video) {
                 LOGE("Could not initialize SDL video: %s", SDL_GetError());
                 goto end;
             } else {
@@ -567,7 +575,7 @@ scrcpy(struct scrcpy_options *options) {
         file_pusher_initialized = true;
     }
 
-    if (options->video) {
+    if (device_video) {
         static const struct sc_demuxer_callbacks video_demuxer_cbs = {
             .on_ended = sc_video_demuxer_on_ended,
         };
@@ -583,7 +591,7 @@ scrcpy(struct scrcpy_options *options) {
                         &audio_demuxer_cbs, options);
     }
 
-    bool needs_video_decoder = options->video_playback;
+    bool needs_video_decoder = device_video && options->video_playback;
     bool needs_audio_decoder = options->audio_playback;
 #ifdef HAVE_V4L2
     needs_video_decoder |= !!options->v4l2_device;
@@ -604,7 +612,7 @@ scrcpy(struct scrcpy_options *options) {
             .on_ended = sc_recorder_on_ended,
         };
         if (!sc_recorder_init(&s->recorder, options->record_filename,
-                              options->record_format, options->video,
+                              options->record_format, device_video,
                               options->audio, options->record_orientation,
                               &recorder_cbs, NULL)) {
             goto end;
@@ -616,7 +624,7 @@ scrcpy(struct scrcpy_options *options) {
         }
         recorder_started = true;
 
-        if (options->video) {
+        if (device_video) {
             sc_packet_source_add_sink(&s->video_demuxer.packet_source,
                                       &s->recorder.video_packet_sink);
         }
@@ -797,7 +805,7 @@ aoa_complete:
             options->window_title ? options->window_title : info->device_name;
 
         struct sc_screen_params screen_params = {
-            .video = options->video_playback,
+            .video = screen_video,
             .camera = options->video_source == SC_VIDEO_SOURCE_CAMERA,
             .flex_display = options->flex_display,
             .controller = controller,
@@ -829,7 +837,22 @@ aoa_complete:
         }
         screen_initialized = true;
 
-        if (options->video_playback) {
+        if (cuttlefish_video) {
+            if (!sc_cuttlefish_frame_source_init(&s->cuttlefish_frame_source,
+                                                 options->cuttlefish_frames_socket,
+                                                 options->display_id,
+                                                 &s->screen)) {
+                goto end;
+            }
+            cuttlefish_frame_source_initialized = true;
+
+            if (!sc_cuttlefish_frame_source_start(&s->cuttlefish_frame_source)) {
+                goto end;
+            }
+            cuttlefish_frame_source_started = true;
+        }
+
+        if (device_video && options->video_playback) {
             struct sc_frame_source *src = &s->video_decoder.frame_source;
             if (options->video_buffer) {
                 sc_delay_buffer_init(&s->video_buffer,
@@ -871,7 +894,7 @@ aoa_complete:
     // Now that the header values have been consumed, the socket(s) will
     // receive the stream(s). Start the demuxer(s).
 
-    if (options->video) {
+    if (device_video) {
         if (!sc_demuxer_start(&s->video_demuxer)) {
             goto end;
         }
@@ -980,6 +1003,9 @@ end:
     if (recorder_initialized) {
         sc_recorder_stop(&s->recorder);
     }
+    if (cuttlefish_frame_source_started) {
+        sc_cuttlefish_frame_source_stop(&s->cuttlefish_frame_source);
+    }
     if (screen_initialized) {
         sc_screen_interrupt(&s->screen);
     }
@@ -1017,6 +1043,11 @@ end:
         sc_demuxer_join(&s->audio_demuxer);
     }
 
+    if (cuttlefish_frame_source_started) {
+        sc_cuttlefish_frame_source_join(&s->cuttlefish_frame_source);
+        sc_screen_close_raw_frame_source(&s->screen);
+    }
+
 #ifdef HAVE_V4L2
     if (v4l2_sink_initialized) {
         sc_v4l2_sink_destroy(&s->v4l2_sink);
@@ -1039,6 +1070,10 @@ end:
     if (screen_initialized) {
         sc_screen_join(&s->screen);
         sc_screen_destroy(&s->screen);
+    }
+
+    if (cuttlefish_frame_source_initialized) {
+        sc_cuttlefish_frame_source_destroy(&s->cuttlefish_frame_source);
     }
 
     if (controller_started) {

@@ -5,6 +5,7 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include <stddef.h>
 #include <SDL3/SDL.h>
 #include <libavcodec/avcodec.h>
 #include <libavutil/frame.h>
@@ -104,6 +105,18 @@ struct sc_screen {
 
     AVFrame *frame;
 
+    struct {
+        uint32_t display_number;
+        struct sc_size size;
+        uint32_t fourcc;
+        SDL_PixelFormat format;
+        uint32_t stride;
+        uint8_t *pixels;
+        size_t size_bytes;
+    } pending_raw_frame, raw_frame;
+    bool pending_raw_frame_available; // protected by mutex
+    bool raw_frame_source_open;
+
     bool paused;
     AVFrame *resume_frame;
 
@@ -195,6 +208,16 @@ sc_screen_set_orientation(struct sc_screen *screen,
 // set the display pause state
 void
 sc_screen_set_paused(struct sc_screen *screen, bool paused);
+
+// Push one raw video frame from an external producer.
+bool
+sc_screen_push_raw_frame(struct sc_screen *screen, uint32_t display_number,
+                         uint32_t width, uint32_t height, uint32_t fourcc,
+                         SDL_PixelFormat format, uint32_t stride,
+                         const uint8_t *pixels, size_t size_bytes);
+
+void
+sc_screen_close_raw_frame_source(struct sc_screen *screen);
 
 // react to SDL events
 void

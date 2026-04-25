@@ -28,6 +28,7 @@
 #include "absl/log/log.h"
 
 #include "cuttlefish/host/frontend/webrtc/libdevice/streamer.h"
+#include "cuttlefish/host/frontend/webrtc/raw_frame_streamer.h"
 #include "cuttlefish/host/libs/screen_connector/composition_manager.h"
 #include "cuttlefish/host/libs/screen_connector/video_frame_buffer.h"
 
@@ -36,11 +37,13 @@ namespace cuttlefish {
 DisplayHandler::DisplayHandler(
     webrtc_streaming::Streamer& streamer, ScreenshotHandler& screenshot_handler,
     ScreenConnector& screen_connector,
-    std::optional<std::unique_ptr<CompositionManager>> composition_manager)
+    std::optional<std::unique_ptr<CompositionManager>> composition_manager,
+    RawFrameStreamer* raw_frame_streamer)
     : composition_manager_(std::move(composition_manager)),
       streamer_(streamer),
       screenshot_handler_(screenshot_handler),
-      screen_connector_(screen_connector) {
+      screen_connector_(screen_connector),
+      raw_frame_streamer_(raw_frame_streamer) {
   // Initialize the thread after the rest of the class
   frame_repeater_ = std::thread([this]() { RepeatFramesPeriodically(); });
   screen_connector_.SetCallback(GetScreenConnectorCallback());
@@ -98,14 +101,20 @@ DisplayHandler::GetScreenConnectorCallback() {
   // only to tell the producer how to create a ProcessedFrame to cache into the
   // queue
   auto& composition_manager = composition_manager_;
+  auto* raw_frame_streamer = raw_frame_streamer_;
   DisplayHandler::GenerateProcessedFrameCallback callback =
-      [&composition_manager](
+      [&composition_manager, raw_frame_streamer](
           uint32_t display_number, uint32_t frame_width, uint32_t frame_height,
           uint32_t frame_fourcc_format, uint32_t frame_stride_bytes,
           uint8_t* frame_pixels, WebRtcScProcessedFrame& processed_frame) {
         processed_frame.display_number_ = display_number;
         processed_frame.buf_ =
             std::make_unique<CvdVideoFrameBuffer>(frame_width, frame_height);
+        if (raw_frame_streamer != nullptr) {
+          raw_frame_streamer->OnFrame(display_number, frame_width, frame_height,
+                                      frame_fourcc_format, frame_stride_bytes,
+                                      frame_pixels);
+        }
         if (composition_manager.has_value()) {
           composition_manager.value()->OnFrame(
               display_number, frame_width, frame_height, frame_fourcc_format,

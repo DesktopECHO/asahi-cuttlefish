@@ -52,6 +52,7 @@ enum sc_codec {
 enum sc_video_source {
     SC_VIDEO_SOURCE_DISPLAY,
     SC_VIDEO_SOURCE_CAMERA,
+    SC_VIDEO_SOURCE_CUTTLEFISH_WAYLAND,
 };
 
 enum sc_audio_source {
@@ -248,6 +249,7 @@ struct scrcpy_options {
     const char *camera_size;
     const char *camera_ar;
     const char *camera_zoom;
+    const char *cuttlefish_frames_socket;
     uint16_t camera_fps;
     enum sc_log_level log_level;
     enum sc_codec video_codec;

@@ -1,6 +1,7 @@
 #include "screen.h"
 
 #include <assert.h>
+#include <stdlib.h>
 #include <string.h>
 #include <SDL3/SDL.h>
 
@@ -761,6 +762,95 @@ sc_screen_frame_sink_push_session(struct sc_frame_sink *sink,
     return true;
 }
 
+static void
+sc_screen_raw_frame_clear(struct sc_screen *screen, bool pending) {
+    if (pending) {
+        free(screen->pending_raw_frame.pixels);
+        memset(&screen->pending_raw_frame, 0, sizeof(screen->pending_raw_frame));
+        screen->pending_raw_frame_available = false;
+    } else {
+        free(screen->raw_frame.pixels);
+        memset(&screen->raw_frame, 0, sizeof(screen->raw_frame));
+    }
+}
+
+bool
+sc_screen_push_raw_frame(struct sc_screen *screen, uint32_t display_number,
+                         uint32_t width, uint32_t height, uint32_t fourcc,
+                         SDL_PixelFormat format, uint32_t stride,
+                         const uint8_t *pixels, size_t size_bytes) {
+    assert(screen->video);
+
+    if (!width || width > 0xFFFF || !height || height > 0xFFFF
+            || format == SDL_PIXELFORMAT_UNKNOWN || !stride || !pixels
+            || !size_bytes) {
+        LOGE("Invalid raw frame");
+        return false;
+    }
+
+    uint8_t *copy = malloc(size_bytes);
+    if (!copy) {
+        LOG_OOM();
+        return false;
+    }
+    memcpy(copy, pixels, size_bytes);
+
+    bool open_window = false;
+    bool previous_skipped;
+
+    sc_mutex_lock(&screen->mutex);
+    previous_skipped = screen->pending_raw_frame_available;
+    if (previous_skipped) {
+        free(screen->pending_raw_frame.pixels);
+    }
+
+    screen->pending_raw_frame.display_number = display_number;
+    screen->pending_raw_frame.size.width = width;
+    screen->pending_raw_frame.size.height = height;
+    screen->pending_raw_frame.fourcc = fourcc;
+    screen->pending_raw_frame.format = format;
+    screen->pending_raw_frame.stride = stride;
+    screen->pending_raw_frame.pixels = copy;
+    screen->pending_raw_frame.size_bytes = size_bytes;
+    screen->pending_raw_frame_available = true;
+
+    if (!screen->raw_frame_source_open) {
+        screen->frame_size = screen->pending_raw_frame.size;
+        screen->content_size = get_oriented_size(screen->frame_size,
+                                                 screen->orientation);
+        screen->raw_frame_source_open = true;
+        open_window = true;
+#ifndef NDEBUG
+        screen->open = true;
+#endif
+    }
+    sc_mutex_unlock(&screen->mutex);
+
+    if (open_window && !sc_push_event(SC_EVENT_OPEN_WINDOW)) {
+        return false;
+    }
+
+    if (previous_skipped) {
+        sc_fps_counter_add_skipped_frame(&screen->fps_counter);
+    } else if (!sc_push_event(SC_EVENT_NEW_RAW_FRAME)) {
+        return false;
+    }
+
+    return true;
+}
+
+void
+sc_screen_close_raw_frame_source(struct sc_screen *screen) {
+    if (!screen->raw_frame_source_open) {
+        return;
+    }
+
+    screen->raw_frame_source_open = false;
+#ifndef NDEBUG
+    screen->open = false;
+#endif
+}
+
 bool
 sc_screen_init(struct sc_screen *screen,
                const struct sc_screen_params *params) {
@@ -773,6 +863,10 @@ sc_screen_init(struct sc_screen *screen,
     screen->orientation = SC_ORIENTATION_0;
     screen->disconnected = false;
     screen->disconnect_started = false;
+    memset(&screen->pending_raw_frame, 0, sizeof(screen->pending_raw_frame));
+    memset(&screen->raw_frame, 0, sizeof(screen->raw_frame));
+    screen->pending_raw_frame_available = false;
+    screen->raw_frame_source_open = false;
 
     screen->video = params->video;
     screen->camera = params->camera;
@@ -1098,6 +1192,8 @@ sc_screen_destroy(struct sc_screen *screen) {
     }
     sc_texture_destroy(&screen->tex);
     av_frame_free(&screen->frame);
+    sc_screen_raw_frame_clear(screen, true);
+    sc_screen_raw_frame_clear(screen, false);
 #ifdef SC_DISPLAY_FORCE_OPENGL_CORE_PROFILE
     SDL_GL_DestroyContext(screen->gl_context);
 #endif
@@ -1255,6 +1351,53 @@ sc_screen_update_frame(struct sc_screen *screen) {
     bool can_resize = !screen->prevent_auto_resize;
     sc_mutex_unlock(&screen->mutex);
     return sc_screen_apply_frame(screen, can_resize);
+}
+
+static bool
+sc_screen_apply_raw_frame(struct sc_screen *screen) {
+    assert(screen->video);
+    assert(screen->window_shown);
+
+    sc_fps_counter_add_rendered_frame(&screen->fps_counter);
+
+    struct sc_size new_frame_size = screen->raw_frame.size;
+    if (screen->frame_size.width != new_frame_size.width
+            || screen->frame_size.height != new_frame_size.height) {
+        screen->frame_size = new_frame_size;
+
+        struct sc_size new_content_size =
+            get_oriented_size(new_frame_size, screen->orientation);
+        set_content_size(screen, new_content_size, true);
+        sc_screen_update_content_rect(screen);
+    }
+
+    bool ok =
+        sc_texture_set_from_raw_frame(&screen->tex, screen->raw_frame.size,
+                                      screen->raw_frame.format,
+                                      screen->raw_frame.pixels,
+                                      screen->raw_frame.stride);
+    if (!ok) {
+        return false;
+    }
+
+    sc_screen_render(screen, false);
+    return true;
+}
+
+static bool
+sc_screen_update_raw_frame(struct sc_screen *screen) {
+    assert(screen->video);
+
+    sc_mutex_lock(&screen->mutex);
+    assert(screen->pending_raw_frame_available);
+
+    sc_screen_raw_frame_clear(screen, false);
+    screen->raw_frame = screen->pending_raw_frame;
+    memset(&screen->pending_raw_frame, 0, sizeof(screen->pending_raw_frame));
+    screen->pending_raw_frame_available = false;
+    sc_mutex_unlock(&screen->mutex);
+
+    return sc_screen_apply_raw_frame(screen);
 }
 
 void
@@ -1435,6 +1578,13 @@ sc_screen_handle_event(struct sc_screen *screen, const SDL_Event *event) {
             bool ok = sc_screen_update_frame(screen);
             if (!ok) {
                 LOGE("Frame update failed\n");
+            }
+            return;
+        }
+        case SC_EVENT_NEW_RAW_FRAME: {
+            bool ok = sc_screen_update_raw_frame(screen);
+            if (!ok) {
+                LOGE("Raw frame update failed\n");
             }
             return;
         }

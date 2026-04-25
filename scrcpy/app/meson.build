@@ -11,6 +11,7 @@ src = [
     'src/compat.c',
     'src/control_msg.c',
     'src/controller.c',
+    'src/cuttlefish_frame_source.c',
     'src/decoder.c',
     'src/delay_buffer.c',
     'src/demuxer.c',

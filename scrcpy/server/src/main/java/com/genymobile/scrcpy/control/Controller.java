@@ -791,7 +791,7 @@ public class Controller implements AsyncProcessor, VirtualDisplayListener {
             NewDisplayCapture nd = (NewDisplayCapture) surfaceCapture;
             Ln.i("Resize virtual display to " + width + "x" + height + "/" + dpi);
             nd.setDisplaySize(width, height, dpi);
-        } else if (surfaceCapture instanceof ScreenCapture
+        } else if ((surfaceCapture instanceof ScreenCapture || surfaceCapture == null)
                 && flexDisplay && displayId == 0) {
             // Many encoders require dimensions aligned to at least 8 pixels.
             // Apply the same normalization before updating display 0 to avoid

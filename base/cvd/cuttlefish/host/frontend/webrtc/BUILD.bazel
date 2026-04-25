@@ -57,6 +57,8 @@ cf_cc_binary(
         "location_handler.cpp",
         "location_handler.h",
         "main.cpp",
+        "raw_frame_streamer.cpp",
+        "raw_frame_streamer.h",
         "screenshot_handler.cpp",
         "screenshot_handler.h",
         "sensors_handler.cpp",

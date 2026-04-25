@@ -106,6 +106,8 @@ enum {
     OPT_MIN_SIZE_ALIGNMENT,
     OPT_NO_WINDOW_ASPECT_RATIO_LOCK,
     OPT_RENDER_FIT,
+    OPT_CUTTLEFISH_FRAMES_SOCKET,
+    OPT_CVD,
 };
 
 struct sc_option {
@@ -333,6 +335,20 @@ static const struct sc_option options[] = {
         .text = "Crop the device screen on the server.\n"
                 "The values are expressed in the device natural orientation "
                 "(typically, portrait for a phone, landscape for a tablet).",
+    },
+    {
+        .longopt_id = OPT_CUTTLEFISH_FRAMES_SOCKET,
+        .longopt = "cuttlefish-frames-socket",
+        .argdesc = "path",
+        .text = "Use a Cuttlefish raw frame socket as the video source. "
+                "Android video capture is disabled, but the control socket "
+                "remains enabled.",
+    },
+    {
+        .longopt_id = OPT_CVD,
+        .longopt = "cvd",
+        .argdesc = "path",
+        .text = "Alias for --cuttlefish-frames-socket.",
     },
     {
         .shortopt = 'd',
@@ -967,7 +983,8 @@ static const struct sc_option options[] = {
         .longopt_id = OPT_VIDEO_SOURCE,
         .longopt = "video-source",
         .argdesc = "source",
-        .text = "Select the video source (display or camera).\n"
+        .text = "Select the video source (display, camera or "
+                "cuttlefish-wayland).\n"
                 "Camera mirroring requires Android 12+.\n"
                 "Default is display.",
     },
@@ -2037,7 +2054,13 @@ parse_video_source(const char *optarg, enum sc_video_source *source) {
         return true;
     }
 
-    LOGE("Unsupported video source: %s (expected display or camera)", optarg);
+    if (!strcmp(optarg, "cuttlefish-wayland")) {
+        *source = SC_VIDEO_SOURCE_CUTTLEFISH_WAYLAND;
+        return true;
+    }
+
+    LOGE("Unsupported video source: %s (expected display, camera or "
+         "cuttlefish-wayland)", optarg);
     return false;
 }
 
@@ -2576,6 +2599,11 @@ parse_args_with_getopt(struct scrcpy_cli_args *args, int argc, char *argv[],
             case OPT_RENDER_DRIVER:
                 opts->render_driver = optarg;
                 break;
+            case OPT_CUTTLEFISH_FRAMES_SOCKET:
+            case OPT_CVD:
+                opts->cuttlefish_frames_socket = optarg;
+                opts->video_source = SC_VIDEO_SOURCE_CUTTLEFISH_WAYLAND;
+                break;
             case OPT_NO_MIPMAPS:
                 opts->mipmaps = false;
                 break;
@@ -2847,6 +2875,8 @@ parse_args_with_getopt(struct scrcpy_cli_args *args, int argc, char *argv[],
 
     bool otg = false;
     bool v4l2 = false;
+    bool cuttlefish_video = !!opts->cuttlefish_frames_socket
+            || opts->video_source == SC_VIDEO_SOURCE_CUTTLEFISH_WAYLAND;
 #ifdef HAVE_USB
     otg = opts->otg;
 #endif
@@ -2861,7 +2891,31 @@ parse_args_with_getopt(struct scrcpy_cli_args *args, int argc, char *argv[],
         // --turn-screen-off
     }
 
-    if (!opts->video) {
+    if (cuttlefish_video) {
+        if (!opts->cuttlefish_frames_socket) {
+            LOGE("--video-source=cuttlefish-wayland requires "
+                 "--cuttlefish-frames-socket=PATH");
+            return false;
+        }
+        if (!opts->window) {
+            LOGE("Cuttlefish video source requires a scrcpy window");
+            return false;
+        }
+        if (!opts->video_playback) {
+            LOGE("Cuttlefish video source requires video playback");
+            return false;
+        }
+        if (opts->record_filename) {
+            LOGE("Recording is not supported with Cuttlefish raw frames");
+            return false;
+        }
+        if (v4l2) {
+            LOGE("V4L2 sink is not supported with Cuttlefish raw frames");
+            return false;
+        }
+    }
+
+    if (!opts->video && !cuttlefish_video) {
         opts->video_playback = false;
         // Do not power on the device on start if video capture is disabled
         opts->power_on = false;
@@ -2882,12 +2936,13 @@ parse_args_with_getopt(struct scrcpy_cli_args *args, int argc, char *argv[],
         opts->audio = false;
     }
 
-    if (!opts->video && !opts->audio && !opts->control && !otg) {
+    if (!opts->video && !cuttlefish_video && !opts->audio && !opts->control
+            && !otg) {
         LOGE("No video, no audio, no control, no OTG: nothing to do");
         return false;
     }
 
-    if (!opts->video && !otg) {
+    if (!opts->video && !cuttlefish_video && !otg) {
         // If video is disabled, then scrcpy must exit on audio failure.
         opts->require_audio = true;
     }
@@ -2917,7 +2972,8 @@ parse_args_with_getopt(struct scrcpy_cli_args *args, int argc, char *argv[],
     }
 #endif
 
-    if (opts->control && opts->video_source == SC_VIDEO_SOURCE_DISPLAY) {
+    if (opts->control && (opts->video_source == SC_VIDEO_SOURCE_DISPLAY
+            || opts->video_source == SC_VIDEO_SOURCE_CUTTLEFISH_WAYLAND)) {
         if (opts->keyboard_input_mode == SC_KEYBOARD_INPUT_MODE_AUTO) {
             opts->keyboard_input_mode = otg ? SC_KEYBOARD_INPUT_MODE_AOA
                                             : SC_KEYBOARD_INPUT_MODE_SDK;
@@ -3120,9 +3176,10 @@ parse_args_with_getopt(struct scrcpy_cli_args *args, int argc, char *argv[],
     }
 
     if (opts->flex_display) {
-        if (opts->video_source != SC_VIDEO_SOURCE_DISPLAY) {
+        if (opts->video_source != SC_VIDEO_SOURCE_DISPLAY
+                && opts->video_source != SC_VIDEO_SOURCE_CUTTLEFISH_WAYLAND) {
             LOGE("-x/--dpi is only available with "
-                 "--video-source=display");
+                 "--video-source=display or cuttlefish-wayland");
             return false;
         }
 
@@ -3159,7 +3216,8 @@ parse_args_with_getopt(struct scrcpy_cli_args *args, int argc, char *argv[],
 
     if (opts->audio && opts->audio_source == SC_AUDIO_SOURCE_AUTO) {
         // Select the audio source according to the video source
-        if (opts->video_source == SC_VIDEO_SOURCE_DISPLAY) {
+        if (opts->video_source == SC_VIDEO_SOURCE_DISPLAY
+                || opts->video_source == SC_VIDEO_SOURCE_CUTTLEFISH_WAYLAND) {
             if (opts->audio_dup) {
                 LOGI("Audio duplication enabled: audio source switched to "
                      "\"playback\"");

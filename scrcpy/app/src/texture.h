@@ -13,6 +13,7 @@
 
 enum sc_texture_type {
     SC_TEXTURE_TYPE_FRAME,
+    SC_TEXTURE_TYPE_RAW_FRAME,
     SC_TEXTURE_TYPE_ICON,
 };
 
@@ -22,6 +23,7 @@ struct sc_texture {
     // Only valid if texture != NULL
     struct sc_size texture_size;
     enum sc_texture_type texture_type;
+    SDL_PixelFormat raw_format;
 
     struct sc_opengl gl;
 
@@ -37,6 +39,11 @@ sc_texture_destroy(struct sc_texture *tex);
 
 bool
 sc_texture_set_from_frame(struct sc_texture *tex, const AVFrame *frame);
+
+bool
+sc_texture_set_from_raw_frame(struct sc_texture *tex, struct sc_size size,
+                              SDL_PixelFormat format, const uint8_t *pixels,
+                              uint32_t stride);
 
 bool
 sc_texture_set_from_surface(struct sc_texture *tex, SDL_Surface *surface);
