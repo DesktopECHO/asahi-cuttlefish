@@ -690,20 +690,7 @@ Result<void> SetGfxstreamFlags(
     const GuestConfig& guest_config,
     const gfxstream::proto::GraphicsAvailability& availability,
     CuttlefishConfig::MutableInstanceSpecific& instance) {
-  // Prefer the legacy pipe transport universally for now. The newer ASG path
-  // still shows runtime regressions on multiple host GPU stacks.
-  std::string gfxstream_transport = kGfxstreamTransportPipe;
-
-  if (IsAmdGpu(availability)) {
-    // KVM does not support mapping host graphics buffers into the guest because
-    // the AMD GPU driver uses TTM memory. More info in
-    // https://lore.kernel.org/all/20230911021637.1941096-1-stevensd@google.com
-    //
-    // TODO(b/254721007): replace with a kernel version check after KVM patches
-    // land.
-    CF_EXPECT(gpu_mode != GpuMode::GfxstreamGuestAngle,
-              "--gpu_mode=gfxstream_guest_angle is broken on AMD GPUs.");
-  }
+    std::string gfxstream_transport = kGfxstreamTransportAsg;
 
   std::unordered_map<std::string, bool> features;
 
