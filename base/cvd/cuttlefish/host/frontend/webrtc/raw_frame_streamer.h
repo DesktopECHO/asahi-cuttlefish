@@ -61,6 +61,12 @@ class RawFrameStreamer {
     kDmabuf,
   };
 
+  enum class FrameSendResult {
+    kSent,
+    kUnavailable,
+    kFailed,
+  };
+
   struct Frame {
     FrameType type = FrameType::kNone;
     RawFrameHeader header = {};
@@ -84,8 +90,8 @@ class RawFrameStreamer {
   bool SendAll(int fd, const void* data, size_t size);
   bool SendDmabufFrame(int fd, const Frame& frame);
   bool SendRawFrame(int fd, const Frame& frame, ClientShm& shm);
-  bool SendShmInit(int fd, ClientShm& shm, size_t payload_size);
-  bool SendShmFrame(int fd, const Frame& frame, ClientShm& shm);
+  FrameSendResult SendShmInit(int fd, ClientShm& shm, size_t payload_size);
+  FrameSendResult SendShmFrame(int fd, const Frame& frame, ClientShm& shm);
   void CloseClientShm(ClientShm& shm) const;
   Frame CopyLatestFrameLocked() const;
   void CloseFrameFd(Frame& frame) const;
@@ -94,6 +100,7 @@ class RawFrameStreamer {
   std::string socket_path_;
   std::thread server_thread_;
   int server_fd_ = -1;
+  int current_client_fd_ = -1;
 
   std::mutex mutex_;
   std::condition_variable frame_cv_;

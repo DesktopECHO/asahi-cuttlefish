@@ -3315,11 +3315,7 @@ cc_library(
         "@libvpx",
         "@libyuv",
         "@protobuf",
-    ] + select({
-        "@platforms//cpu:x86_32": [":libwebrtc_avx2"],
-        "@platforms//cpu:x86_64": [":libwebrtc_avx2"],
-        "//conditions:default": [],
-    }),
+    ],
 )
 
 cc_library(

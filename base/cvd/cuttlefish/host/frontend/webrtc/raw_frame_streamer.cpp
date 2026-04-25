@@ -19,6 +19,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <linux/memfd.h>
+#include <poll.h>
 #include <string.h>
 #include <sys/mman.h>
 #include <sys/socket.h>
@@ -28,6 +29,7 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <chrono>
 #include <utility>
 
 #include "absl/log/log.h"
@@ -39,10 +41,12 @@ constexpr uint32_t kRawFrameMagic = 0x46414b49;  // "IKAF", little-endian.
 constexpr uint32_t kRawFrameVersion = 1;
 constexpr uint32_t kDmabufFrameMagic = 0x44414b49;  // "IKAD", little-endian.
 constexpr uint32_t kDmabufFrameVersion = 1;
-constexpr uint32_t kShmInitMagic = 0x53414b49;  // "IKAS", little-endian.
+constexpr uint32_t kShmInitMagic = 0x53414b49;    // "IKAS", little-endian.
 constexpr uint32_t kShmNotifyMagic = 0x4e414b49;  // "IKAN", little-endian.
 constexpr uint32_t kShmFrameVersion = 1;
 constexpr size_t kRawBufferPoolSize = 4;
+constexpr int kAcceptPollTimeoutMs = 100;
+constexpr int kFrameSendTimeoutMs = 50;
 
 struct DmabufFrameHeader {
   uint32_t magic;
@@ -85,6 +89,68 @@ int MemfdCreate(const char* name) {
 #endif
 }
 
+using SendDeadline = std::chrono::steady_clock::time_point;
+
+SendDeadline NewSendDeadline() {
+  return std::chrono::steady_clock::now() +
+         std::chrono::milliseconds(kFrameSendTimeoutMs);
+}
+
+int RemainingMillis(SendDeadline deadline) {
+  const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
+      deadline - std::chrono::steady_clock::now());
+  return remaining.count() > 0 ? static_cast<int>(remaining.count()) : 0;
+}
+
+bool WaitUntilWritable(int fd, SendDeadline deadline) {
+  while (true) {
+    const int timeout_ms = RemainingMillis(deadline);
+    if (timeout_ms == 0) {
+      return false;
+    }
+
+    pollfd pfd = {
+        .fd = fd,
+        .events = POLLOUT,
+        .revents = 0,
+    };
+    const int poll_result = poll(&pfd, 1, timeout_ms);
+    if (poll_result < 0) {
+      if (errno == EINTR) {
+        continue;
+      }
+      return false;
+    }
+    if (poll_result == 0 ||
+        (pfd.revents & (POLLERR | POLLHUP | POLLNVAL)) != 0) {
+      return false;
+    }
+    if ((pfd.revents & POLLOUT) != 0) {
+      return true;
+    }
+  }
+}
+
+bool SendMessageWithDeadline(int fd, msghdr* msg, size_t expected_size) {
+  SendDeadline deadline = NewSendDeadline();
+  while (true) {
+    ssize_t written = sendmsg(fd, msg, MSG_NOSIGNAL | MSG_DONTWAIT);
+    if (written < 0) {
+      if (errno == EINTR) {
+        continue;
+      }
+      if (errno == EAGAIN || errno == EWOULDBLOCK) {
+        if (!WaitUntilWritable(fd, deadline)) {
+          return false;
+        }
+        continue;
+      }
+      return false;
+    }
+    return static_cast<size_t>(written) == expected_size;
+  }
+}
+
 }  // namespace
 
 RawFrameStreamer::RawFrameStreamer(std::string socket_path)
@@ -97,11 +163,12 @@ RawFrameStreamer::~RawFrameStreamer() {
     std::lock_guard<std::mutex> lock(mutex_);
     stopped_ = true;
     frame_cv_.notify_all();
-  }
-
-  if (server_fd_ >= 0) {
-    shutdown(server_fd_, SHUT_RDWR);
-    close(server_fd_);
+    if (current_client_fd_ >= 0) {
+      shutdown(current_client_fd_, SHUT_RDWR);
+    }
+    if (server_fd_ >= 0) {
+      shutdown(server_fd_, SHUT_RDWR);
+    }
   }
 
   if (server_thread_.joinable()) {
@@ -114,8 +181,7 @@ RawFrameStreamer::~RawFrameStreamer() {
 
 void RawFrameStreamer::OnFrame(uint32_t display_number, uint32_t width,
                                uint32_t height, uint32_t fourcc,
-                               uint32_t stride_bytes,
-                               const uint8_t* pixels) {
+                               uint32_t stride_bytes, const uint8_t* pixels) {
   if (width == 0 || height == 0 || stride_bytes == 0 || pixels == nullptr) {
     return;
   }
@@ -218,12 +284,19 @@ void RawFrameStreamer::ServerLoop() {
 
   unlink(socket_path_.c_str());
 
-  int fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+  int fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC | SOCK_NONBLOCK, 0);
   if (fd < 0) {
     PLOG(ERROR) << "Failed to create raw frame socket";
     return;
   }
-  server_fd_ = fd;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (stopped_) {
+      close(fd);
+      return;
+    }
+    server_fd_ = fd;
+  }
 
   sockaddr_un addr = {};
   addr.sun_family = AF_UNIX;
@@ -231,8 +304,13 @@ void RawFrameStreamer::ServerLoop() {
 
   if (bind(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) != 0) {
     PLOG(ERROR) << "Failed to bind raw frame socket: " << socket_path_;
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      if (server_fd_ == fd) {
+        server_fd_ = -1;
+      }
+    }
     close(fd);
-    server_fd_ = -1;
     return;
   }
 
@@ -240,32 +318,94 @@ void RawFrameStreamer::ServerLoop() {
 
   if (listen(fd, 1) != 0) {
     PLOG(ERROR) << "Failed to listen on raw frame socket: " << socket_path_;
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      if (server_fd_ == fd) {
+        server_fd_ = -1;
+      }
+    }
     close(fd);
-    server_fd_ = -1;
     return;
   }
 
   LOG(INFO) << "Raw frame socket listening at " << socket_path_;
 
   while (true) {
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      if (stopped_) {
+        break;
+      }
+    }
+
+    pollfd pfd = {
+        .fd = fd,
+        .events = POLLIN,
+        .revents = 0,
+    };
+    const int poll_result = poll(&pfd, 1, kAcceptPollTimeoutMs);
+    if (poll_result < 0) {
+      if (errno == EINTR) {
+        continue;
+      }
+      PLOG(ERROR) << "Failed to poll raw frame socket";
+      break;
+    }
+    if (poll_result == 0) {
+      continue;
+    }
+    if ((pfd.revents & (POLLERR | POLLHUP | POLLNVAL)) != 0) {
+      std::lock_guard<std::mutex> lock(mutex_);
+      if (!stopped_) {
+        LOG(ERROR) << "Raw frame socket is no longer accepting clients";
+      }
+      break;
+    }
+    if ((pfd.revents & POLLIN) == 0) {
+      continue;
+    }
+
     int client_fd = accept4(fd, nullptr, nullptr, SOCK_CLOEXEC);
     if (client_fd < 0) {
       std::lock_guard<std::mutex> lock(mutex_);
       if (stopped_) {
         break;
       }
-      if (errno == EINTR) {
+      if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK) {
         continue;
       }
       PLOG(ERROR) << "Failed to accept raw frame client";
       continue;
     }
 
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      if (stopped_) {
+        close(client_fd);
+        break;
+      }
+      current_client_fd_ = client_fd;
+    }
+
     LOG(INFO) << "Raw frame client connected";
     ClientLoop(client_fd);
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      if (current_client_fd_ == client_fd) {
+        current_client_fd_ = -1;
+      }
+    }
     close(client_fd);
     LOG(INFO) << "Raw frame client disconnected";
   }
+
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (server_fd_ == fd) {
+      server_fd_ = -1;
+    }
+  }
+  close(fd);
 }
 
 void RawFrameStreamer::ClientLoop(int client_fd) {
@@ -276,8 +416,8 @@ void RawFrameStreamer::ClientLoop(int client_fd) {
     Frame frame;
     {
       std::unique_lock<std::mutex> lock(mutex_);
-      frame_cv_.wait(lock,
-                     [&]() { return stopped_ || generation_ != sent_generation; });
+      frame_cv_.wait(
+          lock, [&]() { return stopped_ || generation_ != sent_generation; });
       if (stopped_) {
         CloseClientShm(shm);
         return;
@@ -306,10 +446,17 @@ void RawFrameStreamer::ClientLoop(int client_fd) {
 
 bool RawFrameStreamer::SendAll(int fd, const void* data, size_t size) {
   const uint8_t* ptr = reinterpret_cast<const uint8_t*>(data);
+  SendDeadline deadline = NewSendDeadline();
   while (size > 0) {
-    ssize_t written = send(fd, ptr, size, MSG_NOSIGNAL);
+    ssize_t written = send(fd, ptr, size, MSG_NOSIGNAL | MSG_DONTWAIT);
     if (written < 0) {
       if (errno == EINTR) {
+        continue;
+      }
+      if (errno == EAGAIN || errno == EWOULDBLOCK) {
+        if (!WaitUntilWritable(fd, deadline)) {
+          return false;
+        }
         continue;
       }
       return false;
@@ -329,36 +476,40 @@ bool RawFrameStreamer::SendRawFrame(int fd, const Frame& frame,
     return false;
   }
 
-  if (SendShmFrame(fd, frame, shm)) {
+  const FrameSendResult shm_result = SendShmFrame(fd, frame, shm);
+  if (shm_result == FrameSendResult::kSent) {
     return true;
+  }
+  if (shm_result == FrameSendResult::kFailed) {
+    return false;
   }
 
   return SendAll(fd, &frame.header, sizeof(frame.header)) &&
          SendAll(fd, frame.pixels->data(), frame.pixels->size());
 }
 
-bool RawFrameStreamer::SendShmInit(int fd, ClientShm& shm,
-                                   size_t payload_size) {
+RawFrameStreamer::FrameSendResult RawFrameStreamer::SendShmInit(
+    int fd, ClientShm& shm, size_t payload_size) {
   constexpr uint32_t kSlotCount = 4;
   const size_t slot_size = std::max<size_t>(payload_size, 1);
   if (slot_size > UINT32_MAX) {
-    return false;
+    return FrameSendResult::kUnavailable;
   }
   const size_t mapping_size = slot_size * kSlotCount;
   if (mapping_size / kSlotCount != slot_size) {
-    return false;
+    return FrameSendResult::kUnavailable;
   }
 
   int shm_fd = MemfdCreate("ika-raw-frame-slots");
   if (shm_fd < 0) {
     PLOG(WARNING) << "Failed to create raw frame shared memory";
-    return false;
+    return FrameSendResult::kUnavailable;
   }
 
   if (ftruncate(shm_fd, mapping_size) != 0) {
     PLOG(WARNING) << "Failed to size raw frame shared memory";
     close(shm_fd);
-    return false;
+    return FrameSendResult::kUnavailable;
   }
 
   void* mapping = mmap(nullptr, mapping_size, PROT_READ | PROT_WRITE,
@@ -366,7 +517,7 @@ bool RawFrameStreamer::SendShmInit(int fd, ClientShm& shm,
   if (mapping == MAP_FAILED) {
     PLOG(WARNING) << "Failed to map raw frame shared memory";
     close(shm_fd);
-    return false;
+    return FrameSendResult::kUnavailable;
   }
 
   ShmInitHeader header = {
@@ -393,23 +544,12 @@ bool RawFrameStreamer::SendShmInit(int fd, ClientShm& shm,
   cmsg->cmsg_len = CMSG_LEN(sizeof(int));
   memcpy(CMSG_DATA(cmsg), &shm_fd, sizeof(int));
 
-  bool sent = false;
-  while (true) {
-    ssize_t written = sendmsg(fd, &msg, MSG_NOSIGNAL);
-    if (written < 0) {
-      if (errno == EINTR) {
-        continue;
-      }
-      break;
-    }
-    sent = static_cast<size_t>(written) == sizeof(header);
-    break;
-  }
+  bool sent = SendMessageWithDeadline(fd, &msg, sizeof(header));
 
   if (!sent) {
     munmap(mapping, mapping_size);
     close(shm_fd);
-    return false;
+    return FrameSendResult::kFailed;
   }
 
   CloseClientShm(shm);
@@ -421,28 +561,29 @@ bool RawFrameStreamer::SendShmInit(int fd, ClientShm& shm,
 
   LOG(INFO) << "Using shared-memory raw frame slots: " << kSlotCount << " x "
             << slot_size << " bytes";
-  return true;
+  return FrameSendResult::kSent;
 }
 
-bool RawFrameStreamer::SendShmFrame(int fd, const Frame& frame,
-                                    ClientShm& shm) {
-  if (!frame.pixels || frame.pixels->empty()
-      || frame.header.payload_size == 0) {
-    return false;
+RawFrameStreamer::FrameSendResult RawFrameStreamer::SendShmFrame(
+    int fd, const Frame& frame, ClientShm& shm) {
+  if (!frame.pixels || frame.pixels->empty() ||
+      frame.header.payload_size == 0) {
+    return FrameSendResult::kFailed;
   }
 
   const size_t payload_size = frame.pixels->size();
   if (payload_size > UINT32_MAX) {
-    return false;
+    return FrameSendResult::kFailed;
   }
   if (shm.fd < 0 || shm.data == nullptr || payload_size > shm.slot_size) {
-    if (!SendShmInit(fd, shm, payload_size)) {
-      return false;
+    const FrameSendResult init_result = SendShmInit(fd, shm, payload_size);
+    if (init_result != FrameSendResult::kSent) {
+      return init_result;
     }
   }
   if (shm.fd < 0 || shm.data == nullptr || payload_size > shm.slot_size ||
       shm.slot_count == 0) {
-    return false;
+    return FrameSendResult::kFailed;
   }
 
   const uint32_t slot_index = shm.next_slot++ % shm.slot_count;
@@ -461,7 +602,8 @@ bool RawFrameStreamer::SendShmFrame(int fd, const Frame& frame,
       .slot_index = slot_index,
   };
 
-  return SendAll(fd, &header, sizeof(header));
+  return SendAll(fd, &header, sizeof(header)) ? FrameSendResult::kSent
+                                              : FrameSendResult::kFailed;
 }
 
 bool RawFrameStreamer::SendDmabufFrame(int fd, const Frame& frame) {
@@ -499,16 +641,7 @@ bool RawFrameStreamer::SendDmabufFrame(int fd, const Frame& frame) {
   cmsg->cmsg_len = CMSG_LEN(sizeof(int));
   memcpy(CMSG_DATA(cmsg), &frame.dmabuf_fd, sizeof(int));
 
-  while (true) {
-    ssize_t written = sendmsg(fd, &msg, MSG_NOSIGNAL);
-    if (written < 0) {
-      if (errno == EINTR) {
-        continue;
-      }
-      return false;
-    }
-    return static_cast<size_t>(written) == sizeof(header);
-  }
+  return SendMessageWithDeadline(fd, &msg, sizeof(header));
 }
 
 void RawFrameStreamer::CloseClientShm(ClientShm& shm) const {
