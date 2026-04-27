@@ -10,9 +10,6 @@ PACKAGED_SCRCPY_BIN="/usr/lib/cuttlefish-common/bin/scrcpy"
 PACKAGED_SCRCPY_SERVER="/usr/lib/cuttlefish-common/share/scrcpy/scrcpy-server"
 SCRCPY_ICON_DIR_DEFAULT="/usr/lib/cuttlefish-common/share/icons/hicolor/256x256/apps"
 
-# Default DPI used when neither --dpi nor a valid IKADPI is provided.
-IKA_DEFAULT_DPI="192"
-
 # Checks if a flag was supplied by the user in the arguments
 user_supplied_flag() {
   local flag="$1"
@@ -360,6 +357,9 @@ emit_launch_command() {
 
 resolve_scrcpy_dpi() {
   local explicit_dpi="${1:-}"
+  local size
+  local width
+  local dpi
 
   if [[ -n "${explicit_dpi}" ]]; then
     printf '%s\n' "${explicit_dpi}"
@@ -368,9 +368,21 @@ resolve_scrcpy_dpi() {
 
   if [[ "${IKADPI:-}" =~ ^[0-9]+$ ]] && (( IKADPI >= 72 && IKADPI <= 600 )); then
     printf '%s\n' "${IKADPI}"
-  else
-    printf '%s\n' "${IKA_DEFAULT_DPI}"
+    return 0
   fi
+
+  size="$(host_display_size || true)"
+  if [[ ! "${size}" =~ ^([0-9]+)x[0-9]+$ ]]; then
+    die "could not determine host display width for automatic DPI"
+  fi
+
+  width="${BASH_REMATCH[1]}"
+  dpi=$(( (width / 240) * 24 ))
+  if (( dpi <= 0 )); then
+    die "computed invalid automatic DPI from host display width: ${width}"
+  fi
+
+  printf '%s\n' "${dpi}"
 }
 
 split_start_args() {
@@ -409,6 +421,86 @@ split_start_args() {
   if [[ "${dpi_user_supplied}" != "true" ]]; then
     args_array+=("--dpi=${scrcpy_dpi_ref}")
   fi
+}
+
+host_display_size() {
+  command -v xrandr >/dev/null 2>&1 || return 1
+
+  xrandr --query 2>/dev/null | awk '
+    / connected/ {
+      primary = ($0 ~ / primary /) ? 1 : 0
+      for (i = 1; i <= NF; i++) {
+        if ($i ~ /^[0-9]+x[0-9]+\+[0-9]+\+[0-9]+/) {
+          split($i, pos, "+")
+          split(pos[1], size, "x")
+          area = size[1] * size[2]
+          score = primary ? 2 : 1
+          if (score > best_score ||
+              (score == best_score && area > best_area)) {
+            best_score = score
+            best_area = area
+            best_width = size[1]
+            best_height = size[2]
+          }
+        }
+      }
+    }
+    END {
+      if (best_width && best_height) {
+        printf "%sx%s\n", best_width, best_height
+      }
+    }
+  '
+}
+
+has_display_size_override() {
+  local flag
+
+  for flag in display display0 display1 display2 display3 \
+              displays_textproto displays_binproto x_res y_res; do
+    if user_supplied_flag "${flag}" "$@"; then
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+current_scrcpy_dpi() {
+  if [[ "${SCRCPY_DPI_FLAG}" =~ ^--dpi=([0-9]+)$ ]]; then
+    printf '%s\n' "${BASH_REMATCH[1]}"
+  else
+    printf 'unknown\n'
+  fi
+}
+
+append_default_display_arg() {
+  local -n args_array="$1"
+  local dpi="$2"
+  shift 2
+  local size
+  local width
+  local height
+
+  if has_display_size_override "$@"; then
+    return 0
+  fi
+
+  size="$(host_display_size || true)"
+  if [[ ! "${size}" =~ ^([0-9]+)x([0-9]+)$ ]]; then
+    log "could not determine host display size; leaving Cuttlefish display defaults unchanged"
+    return 0
+  fi
+
+  width="${BASH_REMATCH[1]}"
+  height="${BASH_REMATCH[2]}"
+  if (( width <= 0 || width > 65535 || height <= 0 || height > 65535 )); then
+    log "ignoring invalid host display size: ${size}"
+    return 0
+  fi
+
+  args_array+=("--display=width=${width},height=${height},dpi=${dpi},refresh_rate_hz=60")
+  log "display ceiling: ${width}x${height}/${dpi}"
 }
 
 require_executable() {
@@ -830,9 +922,12 @@ maybe_start_scrcpy() {
 log_start_context() {
   local launcher_log="$1"
   shift
+  local scrcpy_dpi
+  scrcpy_dpi="$(current_scrcpy_dpi)"
 
-  log "starting Cuttlefish with $(basename "${CVD_BIN}")"
-  printf '[%s] starting Cuttlefish with %s\n' "${SCRIPT_NAME}" "$(basename "${CVD_BIN}")" >&3
+  log "starting Cuttlefish with $(basename "${CVD_BIN}") at ${scrcpy_dpi} DPI"
+  printf '[%s] starting Cuttlefish with %s at %s DPI\n' \
+    "${SCRIPT_NAME}" "$(basename "${CVD_BIN}")" "${scrcpy_dpi}" >&3
   log "HOME=${CVD_HOME_DIR}"
   log "ANDROID_HOST_OUT=${CVD_HOST_OUT}"
   log "ANDROID_PRODUCT_OUT=${CVD_PRODUCT_OUT}"
@@ -873,6 +968,7 @@ start_cvd() {
   fi
 
   apply_start_default_args args "$@"
+  append_default_display_arg args "${scrcpy_dpi}" "$@"
   append_host_timezone_arg args
 
   log_start_context "${launcher_log}" "${args[@]}"
