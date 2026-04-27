@@ -88,6 +88,7 @@ struct sc_screen {
     bool initial_window_show_deferred;
     struct sc_size initial_display_size;
     sc_tick initial_window_prepare_tick;
+    SDL_TimerID initial_window_show_timer; // protected by mutex
     bool transient_stretch;
     sc_tick last_resize_event_tick;
     SDL_TimerID resize_settle_timer; // protected by mutex

@@ -383,6 +383,13 @@ static void
 sc_screen_note_raw_frame_resize_activity(struct sc_screen *screen);
 static void
 sc_screen_show_prepared_window(struct sc_screen *screen);
+static void
+sc_screen_schedule_initial_window_show_timer(struct sc_screen *screen);
+static SDL_TimerID
+sc_screen_take_initial_window_show_timer_locked(struct sc_screen *screen);
+static Uint32 SDLCALL
+sc_screen_initial_window_show_timer(void *userdata, SDL_TimerID timerID,
+                                    Uint32 interval);
 static Uint32 SDLCALL
 sc_screen_raw_frame_refresh_timer(void *userdata, SDL_TimerID timerID,
                                   Uint32 interval);
@@ -1070,6 +1077,51 @@ sc_screen_schedule_raw_frame_refresh_locked(struct sc_screen *screen,
                      sc_screen_raw_frame_refresh_timer, screen);
 }
 
+static SDL_TimerID
+sc_screen_take_initial_window_show_timer_locked(struct sc_screen *screen) {
+    SDL_TimerID timer = screen->initial_window_show_timer;
+    screen->initial_window_show_timer = 0;
+    return timer;
+}
+
+static Uint32 SDLCALL
+sc_screen_initial_window_show_timer(void *userdata, SDL_TimerID timerID,
+                                    Uint32 interval) {
+    (void) interval;
+
+    struct sc_screen *screen = userdata;
+    bool push_open_window_event = false;
+
+    sc_mutex_lock(&screen->mutex);
+    if (screen->initial_window_show_timer == timerID) {
+        screen->initial_window_show_timer = 0;
+        push_open_window_event = screen->initial_window_show_deferred
+                              && !screen->window_shown;
+    }
+    sc_mutex_unlock(&screen->mutex);
+
+    if (push_open_window_event
+            && !sc_push_event(SC_EVENT_INITIAL_WINDOW_SHOW_TIMEOUT)) {
+        LOGW("Could not push initial window show timeout event");
+    }
+
+    return 0;
+}
+
+static void
+sc_screen_schedule_initial_window_show_timer(struct sc_screen *screen) {
+    sc_mutex_lock(&screen->mutex);
+    if (screen->initial_window_show_timer) {
+        sc_mutex_unlock(&screen->mutex);
+        return;
+    }
+
+    screen->initial_window_show_timer =
+        SDL_AddTimer(SC_TICK_TO_MS(FLEX_DISPLAY_INITIAL_SHOW_MAX_DELAY),
+                     sc_screen_initial_window_show_timer, screen);
+    sc_mutex_unlock(&screen->mutex);
+}
+
 static Uint32 SDLCALL
 sc_screen_raw_frame_refresh_timer(void *userdata, SDL_TimerID timerID,
                                   Uint32 interval) {
@@ -1332,6 +1384,7 @@ sc_screen_init(struct sc_screen *screen,
     screen->initial_display_size.width = 0;
     screen->initial_display_size.height = 0;
     screen->initial_window_prepare_tick = 0;
+    screen->initial_window_show_timer = 0;
     screen->transient_stretch = false;
     screen->last_resize_event_tick = 0;
     screen->resize_settle_timer = 0;
@@ -1617,6 +1670,7 @@ sc_screen_show_initial_window(struct sc_screen *screen) {
     if (screen->flex_display) {
         screen->initial_window_show_deferred = true;
         screen->initial_window_prepare_tick = sc_tick_now();
+        sc_screen_schedule_initial_window_show_timer(screen);
         sc_screen_maybe_request_display_resize(screen, true);
         screen->initial_display_size = screen->last_requested_display_size;
         // Do not let the initial relayout request throttle the compositor's
@@ -1638,6 +1692,14 @@ static void
 sc_screen_show_prepared_window(struct sc_screen *screen) {
     if (screen->window_shown) {
         return;
+    }
+
+    SDL_TimerID timer;
+    sc_mutex_lock(&screen->mutex);
+    timer = sc_screen_take_initial_window_show_timer_locked(screen);
+    sc_mutex_unlock(&screen->mutex);
+    if (timer) {
+        SDL_RemoveTimer(timer);
     }
 
     screen->initial_window_show_deferred = false;
@@ -1691,6 +1753,9 @@ sc_screen_destroy(struct sc_screen *screen) {
     av_frame_free(&screen->frame);
     if (screen->raw_frame_refresh_timer) {
         SDL_RemoveTimer(screen->raw_frame_refresh_timer);
+    }
+    if (screen->initial_window_show_timer) {
+        SDL_RemoveTimer(screen->initial_window_show_timer);
     }
     if (screen->resize_settle_timer) {
         SDL_RemoveTimer(screen->resize_settle_timer);
@@ -2325,6 +2390,14 @@ sc_screen_handle_event(struct sc_screen *screen, const SDL_Event *event) {
         }
         case SC_EVENT_RESIZE_SETTLED:
             sc_screen_on_resize_settled(screen);
+            return;
+        case SC_EVENT_INITIAL_WINDOW_SHOW_TIMEOUT:
+            if (!screen->window_shown && screen->initial_window_show_deferred) {
+                sc_screen_show_prepared_window(screen);
+                if (screen->window_shown) {
+                    sc_screen_render(screen, false);
+                }
+            }
             return;
         case SDL_EVENT_WINDOW_EXPOSED:
             sc_screen_render(screen, true);
