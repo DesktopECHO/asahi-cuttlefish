@@ -363,13 +363,31 @@ sc_screen_update_content_rect(struct sc_screen *screen) {
             && screen->video
             && !screen->disconnected
             && screen->render_fit != SC_RENDER_FIT_DISABLED) {
-        // In dpi resize mode, the host window is the source of truth.
-        // Once the remote display catches up, continue filling the window
-        // instead of falling back to aspect-preserving letterboxing.
-        screen->rect.x = 0;
-        screen->rect.y = 0;
-        screen->rect.w = render_size.width;
-        screen->rect.h = render_size.height;
+        if (screen->resize_display_using_pixel_size
+                && screen->last_requested_display_size.width
+                && screen->last_requested_display_size.height) {
+            // Direct Display requests the guest size in render-output pixels,
+            // then rounds down to the server's 8-pixel alignment. Keep the
+            // rendered frame at exactly that aligned size so windowed HiDPI
+            // sessions do not stretch a few extra compositor pixels.
+            struct sc_size requested_size =
+                get_oriented_size(screen->last_requested_display_size,
+                                  screen->orientation);
+            uint16_t width = MIN(requested_size.width, render_size.width);
+            uint16_t height = MIN(requested_size.height, render_size.height);
+            screen->rect.x = (render_size.width - width) / 2;
+            screen->rect.y = (render_size.height - height) / 2;
+            screen->rect.w = width;
+            screen->rect.h = height;
+        } else {
+            // In dpi resize mode, the host window is the source of truth.
+            // Once the remote display catches up, continue filling the window
+            // instead of falling back to aspect-preserving letterboxing.
+            screen->rect.x = 0;
+            screen->rect.y = 0;
+            screen->rect.w = render_size.width;
+            screen->rect.h = render_size.height;
+        }
         return;
     }
 
@@ -705,6 +723,59 @@ sc_screen_maybe_request_display_resize(struct sc_screen *screen, bool force) {
 
     LOGV("resize_display(%" PRIu16 ", %" PRIu16 ")", width, height);
     sc_controller_resize_display(screen->controller, width, height);
+}
+
+static bool
+sc_screen_snap_window_to_requested_pixel_size(struct sc_screen *screen) {
+    if (!screen->resize_display_using_pixel_size || !is_windowed(screen)
+            || !screen->last_requested_display_size.width
+            || !screen->last_requested_display_size.height) {
+        return false;
+    }
+
+    struct sc_size render_size =
+        sc_sdl_get_render_output_size(screen->renderer);
+    struct sc_size requested_size =
+        get_oriented_size(screen->last_requested_display_size,
+                          screen->orientation);
+
+    if (render_size.width == requested_size.width
+            && render_size.height == requested_size.height) {
+        return false;
+    }
+
+    if (render_size.width < requested_size.width
+            || render_size.height < requested_size.height) {
+        return false;
+    }
+
+    struct sc_size window_size = sc_sdl_get_window_size(screen->window);
+    struct sc_size target_size = {
+        .width = (uint32_t) window_size.width * requested_size.width
+               / render_size.width,
+        .height = (uint32_t) window_size.height * requested_size.height
+                / render_size.height,
+    };
+
+    target_size.width = MAX(target_size.width, SC_WINDOW_MIN_WIDTH);
+    target_size.height = MAX(target_size.height, SC_WINDOW_MIN_HEIGHT);
+
+    if (target_size.width == window_size.width
+            && target_size.height == window_size.height) {
+        return false;
+    }
+
+    struct sc_point position = sc_sdl_get_window_position(screen->window);
+    struct sc_point target_position = {
+        .x = position.x + (window_size.width - target_size.width) / 2,
+        .y = position.y + (window_size.height - target_size.height) / 2,
+    };
+
+    sc_sdl_set_window_size(screen->window, target_size);
+    sc_sdl_set_window_position(screen->window, target_position);
+    LOGD("Snapped window to Direct Display pixel size: %ux%u",
+         target_size.width, target_size.height);
+    return true;
 }
 
 static void
@@ -2339,6 +2410,13 @@ sc_screen_on_resize_settled(struct sc_screen *screen) {
     }
 
     sc_screen_maybe_request_display_resize(screen, true);
+    if (sc_screen_snap_window_to_requested_pixel_size(screen)) {
+        screen->last_resize_event_tick = now;
+        screen->transient_stretch = true;
+        sc_screen_schedule_resize_settle(screen);
+        return;
+    }
+
     sc_screen_force_raw_frame_refresh(screen);
 
     if (screen->transient_stretch) {
