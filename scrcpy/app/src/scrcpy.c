@@ -808,6 +808,7 @@ aoa_complete:
             .video = screen_video,
             .camera = options->video_source == SC_VIDEO_SOURCE_CAMERA,
             .flex_display = options->flex_display,
+            .resize_display_using_pixel_size = cuttlefish_video,
             .controller = controller,
             .fp = fp,
             .kp = kp,

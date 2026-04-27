@@ -83,6 +83,7 @@ struct sc_screen {
     // Last requested remote display size (in device orientation), used to
     // Deduplicate resize requests while dpi-driven resizing is active.
     struct sc_size last_requested_display_size;
+    bool resize_display_using_pixel_size;
     sc_tick last_resize_request_tick;
     bool initial_window_show_deferred;
     struct sc_size initial_display_size;
@@ -153,6 +154,7 @@ struct sc_screen_params {
     bool video;
     bool camera;
     bool flex_display;
+    bool resize_display_using_pixel_size;
 
     struct sc_controller *controller;
     struct sc_file_pusher *fp;

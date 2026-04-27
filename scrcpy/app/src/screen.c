@@ -656,15 +656,16 @@ sc_screen_maybe_request_display_resize(struct sc_screen *screen, bool force) {
     }
 
     assert(!screen->camera);
-    // Use window logical size (not drawable pixel size). On HiDPI backends,
-    // using pixel size would overshoot the requested Android display size by
-    // the content scale factor and may exceed encoder/device capabilities.
-    struct sc_size window_size = sc_sdl_get_window_size(screen->window);
-    assert(!(window_size.width & !0xFFFF));
-    assert(!(window_size.height & !0xFFFF));
+    // For regular encoded display capture, keep the remote display at the
+    // logical window size to avoid creating unnecessarily large encoder input.
+    // For Direct Display/raw frames, request the renderer output size instead
+    // so HiDPI desktop scaling does not upscale already-rendered text.
+    struct sc_size resize_size = screen->resize_display_using_pixel_size
+                               ? sc_sdl_get_render_output_size(screen->renderer)
+                               : sc_sdl_get_window_size(screen->window);
 
-    uint16_t width = window_size.width;
-    uint16_t height = window_size.height;
+    uint16_t width = resize_size.width;
+    uint16_t height = resize_size.height;
     if (sc_orientation_is_swap(screen->orientation)) {
         uint16_t tmp = width;
         width = height;
@@ -1322,6 +1323,8 @@ sc_screen_init(struct sc_screen *screen,
     screen->window_aspect_ratio_lock = params->window_aspect_ratio_lock;
     screen->render_fit = params->render_fit;
     screen->flex_display = params->flex_display;
+    screen->resize_display_using_pixel_size =
+        params->resize_display_using_pixel_size;
     screen->last_requested_display_size.width = 0;
     screen->last_requested_display_size.height = 0;
     screen->last_resize_request_tick = 0;
