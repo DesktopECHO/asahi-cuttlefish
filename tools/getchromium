@@ -1,0 +1,107 @@
+#!/usr/bin/python3
+import subprocess
+import requests
+import zipfile
+import os
+import sys
+import shutil
+
+# URL for Chromium snapshots
+STORAGE_URL = "https://commondatastorage.googleapis.com/chromium-browser-snapshots"
+
+def run_adb(args):
+    """Executes ADB commands and handles errors."""
+    try:
+        result = subprocess.run(["adb"] + args, capture_output=True, text=True, check=True)
+        return result.stdout.strip()
+    except subprocess.CalledProcessError as e:
+        print(f"!!! ADB Error: {e.stderr}")
+        sys.exit(1)
+    except FileNotFoundError:
+        print("!!! Error: ADB not found. Is it installed and in your PATH?")
+        sys.exit(1)
+
+def get_config():
+    """Detects device architecture and latest revision."""
+    print("[1/5] Verbose: Detecting device architecture...")
+    abi = run_adb(["shell", "getprop", "ro.product.cpu.abi"])
+    
+    if "arm64" in abi:
+        prefix = "AndroidDesktop_arm64"
+    elif "x86_64" in abi:
+        prefix = "AndroidDesktop_x64"
+    else:
+        print(f"!!! Unsupported architecture: {abi}")
+        sys.exit(1)
+    
+    print(f"      Architecture: {prefix}")
+    print(f"[2/5] Verbose: Fetching latest revision for {prefix}...")
+    
+    r = requests.get(f"{STORAGE_URL}/{prefix}/LAST_CHANGE")
+    r.raise_for_status()
+    revision = r.text.strip()
+    print(f"      Target Revision: {revision}")
+    
+    return prefix, revision
+
+def main():
+    # Track paths for cleanup
+    temp_zip = "chrome_temp_download.zip"
+    extracted_dir = None
+    
+    try:
+        prefix, revision = get_config()
+        download_url = f"{STORAGE_URL}/{prefix}/{revision}/chrome-android-desktop.zip"
+        
+        # Download
+        print(f"[3/5] Verbose: Downloading build from {download_url}...")
+        with requests.get(download_url, stream=True) as r:
+            r.raise_for_status()
+            with open(temp_zip, 'wb') as f:
+                for chunk in r.iter_content(chunk_size=1024*1024):
+                    f.write(chunk)
+                    sys.stdout.write(".")
+                    sys.stdout.flush()
+        print("\n      Download complete.")
+
+        # Extract
+        print("[4/5] Verbose: Extracting APK...")
+        with zipfile.ZipFile(temp_zip, 'r') as z:
+            # The zip usually contains a folder named 'chrome-android-desktop'
+            # We find the folder name dynamically
+            top_level = z.namelist()[0].split('/')[0]
+            extracted_dir = top_level
+            z.extractall()
+            
+            # Find the actual APK path
+            apk_path = None
+            for root, dirs, files in os.walk(extracted_dir):
+                for file in files:
+                    if file.endswith(".apk"):
+                        apk_path = os.path.join(root, file)
+                        break
+        
+        if not apk_path:
+            print("!!! Error: Could not find an APK in the downloaded package.")
+            return
+
+        # Install
+        print(f"[5/5] Verbose: Installing {apk_path} to device...")
+        # -r: replace, -d: allow downgrade, -g: grant all permissions
+        run_adb(["install", "-r", "-d", "-g", apk_path])
+        print("      Installation Successful!")
+
+    except Exception as e:
+        print(f"\n!!! An unexpected error occurred: {e}")
+    
+    finally:
+        # THE CLEANUP: Leaves no trace
+        print("Verbose: Cleaning up temporary files...")
+        if os.path.exists(temp_zip):
+            os.remove(temp_zip)
+        if extracted_dir and os.path.isdir(extracted_dir):
+            shutil.rmtree(extracted_dir)
+        print("Done. System is clean.")
+
+if __name__ == "__main__":
+    main()

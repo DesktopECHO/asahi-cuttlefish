@@ -957,7 +957,7 @@ start_cvd() {
 
   if has_live_cvd_processes; then
     log "Cuttlefish is already running under ${CVD_HOME_DIR}"
-    respond_console "Instance already running, restarting console viewer."
+    respond_console "Instance running, local console will restart"
     respond "Android virtual device running"
     start_scrcpy_with_retries "${adb_serial}" "${fullscreen_mode}" || true
     return 0
