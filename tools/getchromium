@@ -64,6 +64,21 @@ def remove_chromium_command_line():
 
 def set_chromium_default_browser():
     print("      Setting Chromium as the default browser...")
+    verify_chromium_installed()
+    for package_name in STOCK_BROWSER_PACKAGES:
+        run_adb_best_effort(
+            [
+                "shell",
+                "cmd",
+                "role",
+                "remove-role-holder",
+                "--user",
+                "0",
+                "android.app.role.BROWSER",
+                package_name,
+                "0",
+            ]
+        )
     run_adb(
         [
             "shell",
@@ -82,6 +97,14 @@ def disable_stock_browsers():
     print("      Disabling stock browser packages...")
     for package_name in STOCK_BROWSER_PACKAGES:
         run_adb_best_effort(["shell", "pm", "disable-user", "--user", "0", package_name])
+
+def verify_chromium_installed():
+    result = run_adb_optional(["shell", "pm", "path", CHROME_PACKAGE])
+    if result.returncode == 0 and result.stdout.strip():
+        return
+
+    print(f"!!! Error: {CHROME_PACKAGE} was not installed by the selected APK.")
+    sys.exit(1)
 
 def is_browser_candidate(apk):
     apk_name = os.path.basename(apk)
@@ -225,7 +248,10 @@ def main():
 
         print(f"[5/5] Verbose: Installing to device...")
         # -r: replace, -d: allow downgrade, -g: grant all permissions
-        run_adb(["install", "-r", "-d", "-g", target_apk])
+        install_output = run_adb(["install", "-r", "-d", "-g", target_apk])
+        if install_output:
+            print(f"      {install_output}")
+        verify_chromium_installed()
         remove_chromium_command_line()
         set_chromium_default_browser()
         disable_stock_browsers()
