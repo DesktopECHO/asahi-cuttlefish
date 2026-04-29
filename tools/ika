@@ -1,5 +1,8 @@
 #!/usr/bin/bash
 
+# DPI is calculated automatically. Set manually by uncommenting the next line:
+# export IKADPI=144
+
 set -euo pipefail
 exec 3>&1
 
@@ -8,6 +11,7 @@ PACKAGED_CVD_HOST_OUT="/usr/lib/cuttlefish-common"
 DEFAULT_CVD_PRODUCT_OUT="/usr/share/cuttlefish-common/lineageos"
 PACKAGED_SCRCPY_BIN="/usr/lib/cuttlefish-common/bin/scrcpy"
 PACKAGED_SCRCPY_SERVER="/usr/lib/cuttlefish-common/share/scrcpy/scrcpy-server"
+PACKAGED_GETCHROMIUM_BIN="/usr/lib/cuttlefish-common/bin/getchromium"
 SCRCPY_ICON_DIR_DEFAULT="/usr/lib/cuttlefish-common/share/icons/hicolor/256x256/apps"
 
 # Checks if a flag was supplied by the user in the arguments
@@ -67,26 +71,16 @@ performance_core_ids() {
   local cap
   local cpu
   max_cap="$(cat /sys/devices/system/cpu/cpu*/cpu_capacity 2>/dev/null | sort -n | tail -1)"
-  if [[ -n "${max_cap}" ]]; then
-    for path in /sys/devices/system/cpu/cpu[0-9]*/cpu_capacity; do
-      [[ -r "${path}" ]] || continue
-      cap="$(<"${path}")"
-      [[ "${cap}" == "${max_cap}" ]] || continue
-      cpu="${path%/cpu_capacity}"
-      cpu="${cpu##*/cpu}"
-      printf '%s\n' "${cpu}"
-    done | sort -n
-    return 0
-  fi
+  [[ -n "${max_cap}" ]] || return 0
 
-  awk '
-    /^processor[[:space:]]*:/ { proc=$3 }
-    /^CPU part[[:space:]]*:/ {
-      if ($4 == "0x023" || $4 == "0x025" || $4 == "0x029" ||
-          $4 == "0x033" || $4 == "0x035" || $4 == "0x039")
-        print proc
-    }
-  ' /proc/cpuinfo 2>/dev/null | sort -n
+  for path in /sys/devices/system/cpu/cpu[0-9]*/cpu_capacity; do
+    [[ -r "${path}" ]] || continue
+    cap="$(<"${path}")"
+    [[ "${cap}" == "${max_cap}" ]] || continue
+    cpu="${path%/cpu_capacity}"
+    cpu="${cpu##*/cpu}"
+    printf '%s\n' "${cpu}"
+  done | sort -n
 }
 
 reserved_host_core_list() {
@@ -115,7 +109,15 @@ default_guest_cpus() {
   fi
 }
 
-
+# ============================================================================
+# Compute Configuration Defaults (passed to cvd_internal_start)
+# ============================================================================
+declare -A CVD_COMPUTE_DEFAULTS=(
+  [cpus]="$(default_guest_cpus)"
+  [memory_mb]="4096"
+  [prefer_performance_cores]="true"
+  [enable_bootanimation]="false"
+)
 
 # ============================================================================
 # GPU Configuration Defaults (passed to cvd_internal_start)
@@ -143,16 +145,6 @@ declare -A CVD_NETWORK_DEFAULTS=(
 )
 
 # ============================================================================
-# Compute Configuration Defaults (passed to cvd_internal_start)
-# ============================================================================
-declare -A CVD_COMPUTE_DEFAULTS=(
-  [cpus]="$(default_guest_cpus)"
-  [memory_mb]="4096"
-  [prefer_performance_cores]="true"
-  [enable_bootanimation]="false"
-)
-
-# ============================================================================
 # Reporting Configuration Defaults (passed to cvd_internal_start)
 # ============================================================================
 declare -A CVD_REPORT_DEFAULTS=(
@@ -164,7 +156,7 @@ declare -A CVD_REPORT_DEFAULTS=(
 # ============================================================================
 declare -A CVD_BOOT_DEFAULTS=(
   [boot_message]="VIRTUAL_DEVICE_BOOT_COMPLETED"
-  [boot_timeout_sec]="90"
+  [boot_timeout_sec]="120"
 )
 
 # ============================================================================
@@ -238,6 +230,25 @@ respond() {
 
 respond_console() {
   printf '%s\n' "$*" >&3
+}
+
+confirm_reset() {
+  local reply
+
+  printf 'WARNING: This will "Factory Reset" your Android virtual device, type "Y" to continue. ' >&3
+  if ! IFS= read -r -n 1 reply; then
+    printf '\n' >&3
+    respond_console "Reset aborted."
+    return 1
+  fi
+  printf '\n' >&3
+
+  if [[ "${reply}" != "Y" && "${reply}" != "y" ]]; then
+    respond_console "Reset aborted."
+    return 1
+  fi
+
+  return 0
 }
 
 parse_start_options() {
@@ -424,25 +435,32 @@ split_start_args() {
 }
 
 host_display_size() {
-  command -v xrandr >/dev/null 2>&1 || return 1
+  command -v wayland-info >/dev/null 2>&1 || return 1
 
-  xrandr --query 2>/dev/null | awk '
-    / connected/ {
-      primary = ($0 ~ / primary /) ? 1 : 0
-      for (i = 1; i <= NF; i++) {
-        if ($i ~ /^[0-9]+x[0-9]+\+[0-9]+\+[0-9]+/) {
-          split($i, pos, "+")
-          split(pos[1], size, "x")
-          area = size[1] * size[2]
-          score = primary ? 2 : 1
-          if (score > best_score ||
-              (score == best_score && area > best_area)) {
-            best_score = score
+  wayland-info 2>/dev/null | awk '
+    /^[[:space:]]*mode:/ {
+      in_mode = 1
+      width = 0
+      height = 0
+      next
+    }
+    in_mode {
+      if (match($0, /width:[[:space:]]*([0-9]+)/, w)) {
+        width = w[1]
+      }
+      if (match($0, /height:[[:space:]]*([0-9]+)/, h)) {
+        height = h[1]
+      }
+      if ($0 ~ /flags:/) {
+        if ($0 ~ /current/ && width && height) {
+          area = width * height
+          if (area > best_area) {
             best_area = area
-            best_width = size[1]
-            best_height = size[2]
+            best_width = width
+            best_height = height
           }
         }
+        in_mode = 0
       }
     }
     END {
@@ -793,6 +811,24 @@ pin_host_frontend_processes() {
   done < <(pgrep -u "${UID}" -x webRTC || true)
 }
 
+ensure_chromium_before_scrcpy() {
+  local adb_serial="$1"
+
+  if adb -s "${adb_serial}" shell pm list packages org.chromium.chrome 2>/dev/null | grep -q "org.chromium.chrome"; then
+    return 0
+  fi
+
+  if [[ ! -x "${PACKAGED_GETCHROMIUM_BIN}" ]]; then
+    log "Chromium is not installed and ${PACKAGED_GETCHROMIUM_BIN} is unavailable; continuing to scrcpy."
+    return 0
+  fi
+
+  log "Chromium is not installed; running getchromium before scrcpy."
+  if ! ANDROID_SERIAL="${adb_serial}" "${PACKAGED_GETCHROMIUM_BIN}" >&3 2>&3; then
+    log "getchromium failed; continuing to scrcpy."
+  fi
+}
+
 start_scrcpy_with_retries() {
   local adb_serial="$1"
   local fullscreen_mode="${2:-false}"
@@ -815,8 +851,8 @@ start_scrcpy_with_retries() {
     --cuttlefish-frames-socket="${cuttlefish_frames_socket}"
     --render-driver=opengl
     --window-borderless
-    --video-bit-rate=36M
     --audio-buffer=80
+    --audio-output-buffer=10
     --audio-codec=raw
     --mouse-bind=+hsn:b+++
   )
@@ -846,6 +882,8 @@ start_scrcpy_with_retries() {
 
   mkdir -p "$(dirname "${scrcpy_log}")"
   : > "${scrcpy_log}"
+
+  ensure_chromium_before_scrcpy "${adb_serial}"
 
   while [[ "${attempt}" -le "${max_attempts}" ]]; do
     log "starting scrcpy for ${adb_serial} (attempt ${attempt})"
@@ -1077,6 +1115,7 @@ main() {
       ;;
     reset)
       shift
+      confirm_reset || exit 1
       stop_cvd_internal true "$@"
       ;;
     restart)

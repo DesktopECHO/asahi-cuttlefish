@@ -2,6 +2,7 @@
 
 #include <assert.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "util/log.h"
 
@@ -107,9 +108,14 @@ void
 sc_sdl_set_window_position(SDL_Window *window, struct sc_point point) {
     bool ok = SDL_SetWindowPosition(window, point.x, point.y);
     if (!ok) {
-        // Expected on some backends (for example Wayland), where non-popup
-        // windows cannot be positioned programmatically.
-        LOGW("Could not set window position: %s", SDL_GetError());
+        const char *error = SDL_GetError();
+        if (error
+                && strstr(error,
+                          "wayland cannot position non-popup windows")) {
+            return;
+        }
+
+        LOGW("Could not set window position: %s", error);
     }
 }
 

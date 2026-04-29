@@ -64,7 +64,9 @@ Requires:       NetworkManager
 Requires:       nftables
 Requires:       openssl
 Requires:       python3
+Requires:       python3-requests
 Requires:       virglrenderer
+Requires:       wayland-utils
 Requires:       xdg-utils
 Requires:       xz-libs
 Recommends:     ebtables
@@ -241,6 +243,7 @@ find %{buildroot}/usr/lib/cuttlefish-common/etc -type f -exec chmod -x '{}' ';'
 find %{buildroot}/usr/lib/cuttlefish-common/usr/share/webrtc/assets -type f -exec chmod -x '{}' ';'
 
 install -Dpm0755 base/host/deploy/capability_query.py %{buildroot}/usr/lib/cuttlefish-common/bin/capability_query.py
+install -Dpm0755 tools/getchromium %{buildroot}/usr/lib/cuttlefish-common/bin/getchromium
 install -Dpm0755 tools/ika %{buildroot}/bin/ika
 install -Dpm0644 base/host/packages/cuttlefish-base/etc/NetworkManager/conf.d/99-cuttlefish.conf %{buildroot}/etc/NetworkManager/conf.d/99-cuttlefish.conf
 install -Dpm0644 base/rpm/99-cuttlefish.conf %{buildroot}/etc/sysctl.d/99-cuttlefish.conf

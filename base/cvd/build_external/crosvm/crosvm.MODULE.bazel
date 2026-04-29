@@ -57,6 +57,9 @@ crosvm_bin.annotation(
     crate = "crosvm",
     gen_all_binaries = True,
     patch_args = ["-p1"],
+    patches = [
+        "@//build_external/crosvm:PATCH.crosvm-composite-duplicate-components.patch",
+    ],
     deps = [
         "@@//:gfxstream_backend_import",
     ],
@@ -152,6 +155,7 @@ git_repository(
     init_submodules = True,
     patch_strip = 1,
     patches = [
+        "@//build_external/crosvm:PATCH.crosvm-composite-duplicate-components.patch",
         "@//build_external/crosvm:PATCH.minijail-sys_common_mk.patch",
         "@//build_external/crosvm:PATCH.minijail-blktracesetup2.patch",
     ],
