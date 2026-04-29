@@ -106,6 +106,7 @@ function install_rpm_build_dependencies() {
   run_as_root dnf -y install \
     meson \
     ninja-build \
+    java-25-openjdk-devel \
     SDL3-devel \
     libavcodec-free-devel \
     libavformat-free-devel \
