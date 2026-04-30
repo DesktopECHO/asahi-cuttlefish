@@ -240,6 +240,11 @@ Result<std::set<std::string>> PreservingOnResume(
   preserving.insert("persistent_vbmeta.img");
   preserving.insert("oemlock_secure");
   preserving.insert("oemlock_insecure");
+  // The per-instance userdata.img is the sole backing store for /data on
+  // boots where the source data_image template doesn't exist (RPM ships
+  // none). Preserve it across --resume, otherwise the clean pass wipes it
+  // and we boot with empty /data every time.
+  preserving.insert("userdata.img");
   // Preserve logs if restoring from a snapshot.
   if (!snapshot_path.empty()) {
     preserving.insert("kernel.log");
@@ -249,7 +254,6 @@ Result<std::set<std::string>> PreservingOnResume(
     preserving.insert("crosvm_openwrt.log");
     preserving.insert("crosvm_openwrt_boot.log");
     preserving.insert("metrics.log");
-    preserving.insert("userdata.img");
   }
   if (InSandbox()) {
     preserving.insert("launcher.log");  // Created before `assemble_cvd` runs
