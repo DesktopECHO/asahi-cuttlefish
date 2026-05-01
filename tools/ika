@@ -813,8 +813,18 @@ pin_host_frontend_processes() {
 
 ensure_chromium_before_scrcpy() {
   local adb_serial="$1"
+  local pm_output
 
-  if adb -s "${adb_serial}" shell pm list packages org.chromium.chrome 2>/dev/null | grep -q "org.chromium.chrome"; then
+  # Only proceed if the device positively confirms org.chromium.chrome is
+  # missing. Any ambiguous state (adb error, empty output, etc.) means we
+  # must NOT auto-install — getchromium is a destructive provisioning step.
+  if ! pm_output="$(adb -s "${adb_serial}" shell pm list packages 2>/dev/null)" \
+      || [[ -z "${pm_output}" ]]; then
+    log "Could not confirm Chromium install state via adb; skipping getchromium."
+    return 0
+  fi
+
+  if grep -Fxq "package:org.chromium.chrome" <<<"${pm_output}"; then
     return 0
   fi
 
@@ -823,7 +833,7 @@ ensure_chromium_before_scrcpy() {
     return 0
   fi
 
-  log "Chromium is not installed; running getchromium before scrcpy."
+  log "Chromium confirmed missing; running getchromium before scrcpy."
   if ! ANDROID_SERIAL="${adb_serial}" "${PACKAGED_GETCHROMIUM_BIN}" >&3 2>&3; then
     log "getchromium failed; continuing to scrcpy."
   fi
